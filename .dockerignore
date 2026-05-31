@@ -1,0 +1,16 @@
+# .dockerignore
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+
+# Client specific
+client/node_modules
+client/dist
+client/.env
+
+# Server specific
+server/node_modules
+server/dist
+server/.env
