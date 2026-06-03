@@ -319,7 +319,7 @@ app.get('/api/url-info', async (req, res) => {
     if (videoId) {
         for (const provider of PROVIDERS) {
             try {
-                const response = await axios.get(provider.getUrl(videoId), { timeout: 15000 });
+                const response = await axios.get(provider.getUrl(videoId, API_KEY), { timeout: 15000 });
                 const parsed = provider.parse(response.data);
                 if (parsed) {
                     return res.json({
@@ -333,7 +333,26 @@ app.get('/api/url-info', async (req, res) => {
                     });
                 }
             } catch (err) {
-                console.error(`YouTube url-info failed:`, err.message);
+                console.error(`YouTube url-info failed (Main Key):`, err.message);
+                if (BACKUP_API_KEY) {
+                    try {
+                        const response = await axios.get(provider.getUrl(videoId, BACKUP_API_KEY), { timeout: 15000 });
+                        const parsed = provider.parse(response.data);
+                        if (parsed) {
+                            return res.json({
+                                videoId: videoId,
+                                name: parsed.title || 'Unknown Title',
+                                artist: { name: parsed.channel || 'Unknown Artist' },
+                                thumbnails: [{ url: parsed.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`, width: 1280, height: 720 }],
+                                type: 'VIDEO',
+                                isDirect: true,
+                                externalData: { ...parsed, status: true }
+                            });
+                        }
+                    } catch (backupErr) {
+                        console.error(`YouTube url-info failed (Backup Key):`, backupErr.message);
+                    }
+                }
             }
         }
     }

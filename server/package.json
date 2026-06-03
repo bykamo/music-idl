@@ -26,7 +26,6 @@
     "node-id3": "^0.2.9",
     "sharp": "^0.34.5",
     "sweetalert2": "^11.26.25",
-    "youtube-dl-exec": "^3.1.7",
     "ytmusic-api": "^5.3.1"
   }
 }

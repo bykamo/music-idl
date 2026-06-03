@@ -129,12 +129,14 @@ export function LimitDialog({
   isOpen, 
   onClose, 
   title = "Batas Unduhan Tercapai", 
-  description = "Anda telah mencapai batas maksimal 5 unduhan per hari. Silakan coba lagi besok." 
+  description = "Anda telah mencapai batas maksimal 5 unduhan per hari. Silakan coba lagi besok.",
+  isLimit = true,
 }: { 
   isOpen: boolean; 
   onClose: () => void;
   title?: string;
   description?: string;
+  isLimit?: boolean;
 }) {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -148,12 +150,14 @@ export function LimitDialog({
         <p className="font-medium text-white">{title}</p>
         <p className="text-sm text-gray-400 leading-relaxed">{description}</p>
         
-        <div className="flex items-center space-x-2 pt-1">
-          <Badge variant="secondary" className="bg-red-900/30 text-red-400 border-red-900/50 text-[10px] px-1.5 py-0">
-            Note!
-          </Badge>
-          <span className="text-[11px] text-gray-500">Kuota 5/5 telah terpenuhi hari ini.</span>
-        </div>
+        {isLimit && (
+          <div className="flex items-center space-x-2 pt-1">
+            <Badge variant="secondary" className="bg-red-900/30 text-red-400 border-red-900/50 text-[10px] px-1.5 py-0">
+              Note!
+            </Badge>
+            <span className="text-[11px] text-gray-500">Kuota 5/5 telah terpenuhi hari ini.</span>
+          </div>
+        )}
         
         <div className="pt-3 flex justify-end">
           <Button onClick={onClose} className="bg-gray-800 hover:bg-gray-700 text-white text-xs px-4 py-1.5 h-auto">Mengerti</Button>

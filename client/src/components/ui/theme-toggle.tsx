@@ -16,7 +16,7 @@ export const AnimatedThemeToggle = ({
   return (
     <Button
       onClick={() => setTheme(isDark ? "light" : "dark")}
-      className={cn("px-2.5", className)}
+      className={cn("px-2.5 hover:bg-transparent hover:text-foreground", className)}
       variant="outline"
       size="icon"
     >

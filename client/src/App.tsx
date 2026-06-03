@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import Swal from 'sweetalert2';
 import { Search, Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music } from 'lucide-react';
 import { AppleMusicIcon } from '@/components/ui/apple-music-icon';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
@@ -59,6 +58,12 @@ function App() {
   const [detailedInfo, setDetailedInfo] = useState<Record<string, ExternalInfo>>({});
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isLimitOpen, setIsLimitOpen] = useState(false);
+  const [errorDialog, setErrorDialog] = useState<{isOpen: boolean, title: string, message: string, isLimit: boolean}>({
+    isOpen: false,
+    title: '',
+    message: '',
+    isLimit: false
+  });
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
@@ -172,13 +177,11 @@ function App() {
                   setDetailedInfo(prev => ({ ...prev, [extractedId]: data }));
               } else { throw new Error('No fallback data'); }
             } catch (e) { 
-              Swal.fire({
-                icon: 'error',
+              setErrorDialog({
+                isOpen: true,
                 title: 'Gagal',
-                text: 'Gagal mendapatkan informasi video.',
-                background: '#1f2937',
-                color: '#fff',
-                confirmButtonColor: '#3b82f6'
+                message: 'Gagal mendapatkan informasi video.',
+                isLimit: false
               });
               setResults([]); 
             }
@@ -275,13 +278,11 @@ function App() {
       }
 
       if (videoId.startsWith('am-')) {
-        Swal.fire({
-          icon: 'warning',
+        setErrorDialog({
+          isOpen: true,
           title: 'Link Kadaluarsa',
-          text: 'Gunakan link Apple Music yang baru.',
-          background: '#1f2937',
-          color: '#fff',
-          confirmButtonColor: '#3b82f6'
+          message: 'Gunakan link Apple Music yang baru.',
+          isLimit: false
         });
         return;
       }
@@ -301,13 +302,11 @@ function App() {
         return;
       }
       if (err.response?.status === 403 && err.response?.data?.message) {
-        Swal.fire({
-          icon: 'error',
+        setErrorDialog({
+          isOpen: true,
           title: 'Server Limit',
-          text: err.response.data.message,
-          background: '#1f2937',
-          color: '#fff',
-          confirmButtonColor: '#3b82f6'
+          message: err.response.data.message,
+          isLimit: false
         });
         return;
       }
@@ -327,22 +326,18 @@ function App() {
           }
         } catch (e: any) { 
           if (e.response?.data?.message) {
-            Swal.fire({
-              icon: 'error',
+            setErrorDialog({
+              isOpen: true,
               title: 'Gagal',
-              text: e.response.data.message,
-              background: '#1f2937',
-              color: '#fff',
-              confirmButtonColor: '#3b82f6'
+              message: e.response.data.message,
+              isLimit: false
             });
           } else {
-            Swal.fire({
-              icon: 'error',
+            setErrorDialog({
+              isOpen: true,
               title: 'Gagal',
-              text: 'Gagal mendownload lagu. Kemungkinan semua limit server telah habis.',
-              background: '#1f2937',
-              color: '#fff',
-              confirmButtonColor: '#3b82f6'
+              message: 'Gagal mendownload lagu. Kemungkinan semua limit server telah habis.',
+              isLimit: false
             });
           }
         }
@@ -409,6 +404,13 @@ function App() {
   return (
     <>
       <LimitDialog isOpen={isLimitOpen} onClose={handleCloseLimitDialog} />
+      <LimitDialog 
+        isOpen={errorDialog.isOpen} 
+        onClose={() => setErrorDialog(prev => ({ ...prev, isOpen: false }))} 
+        title={errorDialog.title}
+        description={errorDialog.message}
+        isLimit={errorDialog.isLimit}
+      />
       {isInitialLoading && <Loader />}
       <div className="relative min-h-screen w-full bg-background transition-colors duration-300 overflow-x-hidden">
         <NeuralNoise color={[1.0, 0.0, 0.0]} opacity={0.5} />
@@ -418,7 +420,7 @@ function App() {
           </div>
 
           <div className="text-center mb-10 space-y-3">
-          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-primary via-primary/80 to-primary/60 bg-clip-text text-transparent">
+          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-primary via-primary to-primary/80 bg-clip-text text-transparent">
             Music IDL
           </h1>
           <p className="text-muted-foreground text-base md:text-lg max-w-xl mx-auto">
@@ -427,10 +429,10 @@ function App() {
         </div>
 
         <div className="flex justify-center gap-3 mb-6">
-          <button onClick={() => setActiveTab('youtube')} className={`px-6 py-2.5 rounded-xl font-bold transition-all flex items-center gap-2 ${activeTab === 'youtube' ? 'bg-[#FF0000] text-white shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
+          <button onClick={() => setActiveTab('youtube')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'youtube' ? 'bg-[#FF0000] text-white shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
             <YouTubeMusicIcon size={18} /> YouTube
           </button>
-          <button onClick={() => setActiveTab('apple')} className={`px-8 py-3 rounded-2xl font-bold transition-all flex items-center gap-2 ${activeTab === 'apple' ? 'bg-[#fa243c] text-white shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
+          <button onClick={() => setActiveTab('apple')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'apple' ? 'bg-[#fa243c] text-white shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
             <AppleMusicIcon size={18} /> Apple Music
           </button>
         </div>
@@ -443,19 +445,19 @@ function App() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={activeTab === 'apple' ? "Tempel link Apple Music..." : "Tempel link YouTube atau ketik judul lagu..."}
-              className="w-full bg-card border border-border rounded-xl py-4 px-5 pl-12 pr-14 text-foreground focus:outline-none focus:border-primary/50 transition-all text-base shadow-lg"
+              className="w-full bg-card border border-border rounded-full py-4 px-5 pl-14 pr-14 text-foreground focus:outline-none focus:border-primary/50 transition-all text-base shadow-lg"
             />
             {activeTab === 'apple' ? (
-              <AppleMusicIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-[#fa243c]" size={20} />
+              <AppleMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-[#fa243c]" size={20} />
             ) : (
-              <YouTubeMusicIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-[#FF0000]" size={20} />
+              <YouTubeMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-[#FF0000]" size={20} />
             )}
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2 z-10">
               {!query.trim() && (
                 <button 
                   type="button" 
                   onClick={handlePaste} 
-                  className="bg-muted/50 hover:bg-input active:scale-90 text-foreground p-2 rounded-lg transition-all flex items-center justify-center min-w-[36px] min-h-[36px] shadow-sm border border-border/50"
+                  className="bg-muted/50 active:scale-90 text-foreground p-2 rounded-full transition-all flex items-center justify-center min-w-[36px] min-h-[36px] shadow-sm border border-border/50"
                   title="Tempel dari clipboard"
                 >
                   <ClipboardPaste size={18} />
@@ -464,11 +466,11 @@ function App() {
             </div>
           </div>
           
-          <div className="mt-3 flex flex-col gap-2">
-            <button 
-              type="submit" 
-              disabled={loading} 
-              className="w-full bg-primary hover:opacity-90 active:scale-[0.99] text-primary-foreground py-3.5 rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg text-base"
+          <div className="mt-4 flex flex-col items-center gap-3">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-fit px-8 py-3 bg-[#FF0000] hover:bg-[#cc0000] active:scale-[0.98] text-white rounded-full font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg text-base"
             >
               {loading ? <Loader2 className="animate-spin" size={20} /> : (query.includes('http') ? <><Download size={20} /> Unduh Sekarang</> : <><Search size={20} /> Cari Lagu</>)}
             </button>
@@ -482,7 +484,7 @@ function App() {
                   setDownloadSuccess(false);
                   inputRef.current?.focus();
                 }}
-                className="w-full bg-card hover:bg-muted text-foreground py-2.5 rounded-xl font-semibold transition-all border border-border flex items-center justify-center gap-2 text-sm"
+                className="w-fit px-8 py-3 bg-card hover:bg-muted text-foreground rounded-full font-semibold transition-all border border-border flex items-center justify-center gap-2 text-sm"
               >
                 <Music size={16} /> Unduh Musik Lainnya
               </button>
@@ -550,8 +552,8 @@ function App() {
                       <div className="flex justify-between text-[11px] font-medium"><span className="text-foreground">{formatSize(ext.filesize)}</span><span className="text-foreground">{ext.bitrate}</span></div>
                     </div>
                   )}
-                  <div className="mt-auto pt-1">
-                    <button onClick={() => downloadMusic(item.videoId, ext?.title || item.name)} disabled={!!downloading} className="w-full bg-primary text-primary-foreground hover:opacity-90 px-3 py-2 rounded-lg font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm">
+                  <div className="mt-auto pt-2 flex justify-center">
+                    <button onClick={() => downloadMusic(item.videoId, ext?.title || item.name)} disabled={!!downloading} className="w-fit bg-primary text-primary-foreground hover:opacity-90 px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm">
                       {downloading === item.videoId ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
                       {downloading === item.videoId ? '...' : 'Unduh'}
                     </button>
