@@ -101,7 +101,24 @@
 
   .glass-card:hover {
     border-color: rgba(155, 44, 44, 0.5); /* fallback for primary/50 */
-    box-shadow: 0 0 20px rgba(155, 44, 44, 0.1);
+    box-shadow: 0 18px 40px rgba(155, 44, 44, 0.12);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

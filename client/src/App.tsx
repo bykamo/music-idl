@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Search, Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music } from 'lucide-react';
+import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music } from 'lucide-react';
 import { AppleMusicIcon } from '@/components/ui/apple-music-icon';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
 import { NeuralNoise } from '@/components/ui/neural-noise';
 import Loader from '@/components/ui/loader';
+import { SearchSkeleton } from '@/components/ui/search-skeleton';
 import { AnimatedThemeToggle } from '@/components/ui/theme-toggle';
 import { LimitDialog } from '@/components/ui/limit-dialog';
 
@@ -107,7 +108,11 @@ function App() {
 
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    if (!query.trim()) {
+      alert('Masukkan link musik terlebih dahulu.');
+      inputRef.current?.focus();
+      return;
+    }
 
     setLoading(true);
     setResults([]);
@@ -193,7 +198,7 @@ function App() {
         }
       }
     } catch (err) { 
-      console.error('Action failed', err); 
+      console.error('Action failed', err);
     } finally { 
       setLoading(false); 
     }
@@ -419,12 +424,12 @@ function App() {
             <AnimatedThemeToggle theme={theme} setTheme={setTheme} />
           </div>
 
-          <div className="text-center mb-10 space-y-3">
-          <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-primary via-primary to-primary/80 bg-clip-text text-transparent">
+          <div className="text-center mb-10 space-y-4 pt-6 md:pt-2">
+          <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight bg-gradient-to-r from-primary via-primary to-primary/80 bg-clip-text text-transparent">
             Music IDL
           </h1>
-          <p className="text-muted-foreground text-base md:text-lg max-w-xl mx-auto">
-            Pilih platform, tempel link, dan unduh musik favoritmu.
+          <p className="text-muted-foreground text-base md:text-lg max-w-2xl mx-auto">
+            Pilih platform dan tempel link untuk mulai mengunduh.
           </p>
         </div>
 
@@ -437,15 +442,15 @@ function App() {
           </button>
         </div>
 
-        <form onSubmit={handleAction} className="relative max-w-xl mx-auto mb-12">
+        <form onSubmit={handleAction} className="relative max-w-2xl mx-auto mb-10 md:mb-12">
           <div className="relative group">
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={activeTab === 'apple' ? "Tempel link Apple Music..." : "Tempel link YouTube atau ketik judul lagu..."}
-              className="w-full bg-card border border-border rounded-full py-4 px-5 pl-14 pr-14 text-foreground focus:outline-none focus:border-primary/50 transition-all text-base shadow-lg"
+              placeholder={activeTab === 'apple' ? "Tempel link Apple Music..." : "Tempel link YouTube..."}
+              className="w-full bg-card border border-border rounded-2xl md:rounded-full py-4 px-5 pl-14 pr-14 text-foreground placeholder:text-muted-foreground caret-primary selection:bg-primary/30 focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10 transition-all text-base shadow-xl"
             />
             {activeTab === 'apple' ? (
               <AppleMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-[#fa243c]" size={20} />
@@ -457,7 +462,7 @@ function App() {
                 <button 
                   type="button" 
                   onClick={handlePaste} 
-                  className="bg-muted/50 active:scale-90 text-foreground p-2 rounded-full transition-all flex items-center justify-center min-w-[36px] min-h-[36px] shadow-sm border border-border/50"
+                  className="bg-card hover:bg-muted active:scale-90 text-foreground p-2 rounded-full transition-all flex items-center justify-center min-w-[36px] min-h-[36px] shadow-sm border border-border"
                   title="Tempel dari clipboard"
                 >
                   <ClipboardPaste size={18} />
@@ -470,9 +475,9 @@ function App() {
             <button
               type="submit"
               disabled={loading}
-              className="w-fit px-8 py-3 bg-[#FF0000] hover:bg-[#cc0000] active:scale-[0.98] text-white rounded-full font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg text-base"
+              className="w-fit px-8 py-3 bg-[#FF0000] hover:bg-[#cc0000] active:scale-[0.98] text-white rounded-full font-bold transition-all disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg text-base focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
             >
-              {loading ? <Loader2 className="animate-spin" size={20} /> : (query.includes('http') ? <><Download size={20} /> Unduh Sekarang</> : <><Search size={20} /> Cari Lagu</>)}
+              {loading ? <><Loader2 className="animate-spin" size={20} /> Memproses...</> : <><Download size={20} /> Unduh Musik</>}
             </button>
 
             {downloadSuccess && !loading && (
@@ -492,11 +497,15 @@ function App() {
           </div>
         </form>
 
+        {loading && <SearchSkeleton />}
+
+        {!loading && results.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {results.map((item) => {
             const ext = detailedInfo[item.videoId];
+            const platform = activeTab === 'apple' || item.videoId.startsWith('am-') ? 'Apple Music' : 'YouTube Music';
             return (
-              <div key={item.videoId} className="glass-card flex flex-col group relative">
+              <div key={item.videoId} className="glass-card flex flex-col group relative hover:-translate-y-1">
                 <div className="relative aspect-square overflow-hidden bg-muted">
                   <img
                     src={getBestThumbnail(item)}
@@ -514,10 +523,15 @@ function App() {
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-80"></div>                  
                   <div className="absolute bottom-4 left-4 right-4 flex justify-between items-end">
                     <div className="flex flex-col gap-1 w-full">
-                      <span className="bg-primary px-2 py-0.5 rounded text-[10px] font-bold uppercase w-fit text-primary-foreground">
-                        {ext ? ext.bitrate : '320kbps'}
-                      </span>
-                      <h3 className="text-lg font-bold line-clamp-1 leading-tight text-white drop-shadow-lg">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="bg-primary px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit text-primary-foreground">
+                          {ext ? ext.bitrate : '320kbps'}
+                        </span>
+                        <span className="bg-black/70 border border-white/10 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white">
+                          {platform}
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-bold line-clamp-2 leading-tight text-white drop-shadow-lg">
                         {ext?.title || item.name}
                       </h3>
                     </div>
@@ -537,25 +551,25 @@ function App() {
                         {ext ? ext.channel : item.artist.name}
                       </p>
                     </div>
-                    {ext ? (
+                    {ext && (ext.view_count > 0 || ext.like_count > 0) ? (
                       <div className="space-y-1 text-right">
-                        <p className="text-muted-foreground flex items-center justify-end gap-1">{formatViews(ext.view_count)} <Eye size={12} /></p>
-                        <p className="text-muted-foreground flex items-center justify-end gap-1">{formatViews(ext.like_count)} <ThumbsUp size={12} /></p>
+                        {ext.view_count > 0 && <p className="text-muted-foreground flex items-center justify-end gap-1">{formatViews(ext.view_count)} <Eye size={12} /></p>}
+                        {ext.like_count > 0 && <p className="text-muted-foreground flex items-center justify-end gap-1">{formatViews(ext.like_count)} <ThumbsUp size={12} /></p>}
                       </div>
                     ) : (
                       !item.videoId.startsWith('am-') && <button onClick={() => fetchExternalInfo(item.videoId)} className="text-[10px] text-primary/70 hover:text-primary flex items-center justify-end gap-1 transition-colors"><Info size={10} /> Detail</button>
                     )}
                   </div>
-                  {ext && (
+                  {ext && ext.filesize > 0 && (
                     <div className="bg-muted/50 rounded-lg p-2.5 border border-border space-y-1">
                       <div className="flex justify-between text-[10px] text-muted-foreground uppercase font-bold tracking-wider"><span>Size</span><span>Bitrate</span></div>
                       <div className="flex justify-between text-[11px] font-medium"><span className="text-foreground">{formatSize(ext.filesize)}</span><span className="text-foreground">{ext.bitrate}</span></div>
                     </div>
                   )}
                   <div className="mt-auto pt-2 flex justify-center">
-                    <button onClick={() => downloadMusic(item.videoId, ext?.title || item.name)} disabled={!!downloading} className="w-fit bg-primary text-primary-foreground hover:opacity-90 px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm">
+                    <button onClick={() => downloadMusic(item.videoId, ext?.title || item.name)} disabled={!!downloading} className="w-full bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98] px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30">
                       {downloading === item.videoId ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
-                      {downloading === item.videoId ? '...' : 'Unduh'}
+                      {downloading === item.videoId ? 'Menyiapkan...' : 'Unduh MP3'}
                     </button>
                   </div>
                 </div>
@@ -563,14 +577,34 @@ function App() {
             );
           })}
         </div>
+        )}
 
         {!loading && results.length === 0 && (
-          <div className="text-center py-24">
+          <div className="text-center py-16 md:py-24">
             <div className="inline-block p-6 rounded-full bg-card border border-border mb-6 shadow-sm"><LinkIcon size={48} className="text-primary" /></div>
             <h2 className="text-2xl font-bold text-foreground">Siap untuk download?</h2>
-            <p className="text-muted-foreground mt-2">Pilih platform di atas dan tempelkan link Anda.</p>
+            <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto text-left">
+              {[
+                ['1', 'Pilih platform', 'Gunakan YouTube atau Apple Music.'],
+                ['2', 'Tempel link', 'Masukkan URL musik yang ingin diunduh.'],
+                ['3', 'Unduh musik', 'Cek hasil dan unduh MP3.'],
+              ].map(([step, title, desc]) => (
+                <div key={step} className="rounded-2xl border border-border bg-card/80 p-4 shadow-sm">
+                  <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">{step}</div>
+                  <p className="font-bold text-foreground">{title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{desc}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
+
+        <footer className="mt-14 pb-2 flex justify-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-4 py-2 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur">
+            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+            Download MP3 cepat, simpel, dan responsif
+          </div>
+        </footer>
       </div>
     </div>
   </>
