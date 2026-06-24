@@ -450,7 +450,7 @@ function App() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={activeTab === 'apple' ? "Tempel link Apple Music..." : "Tempel link YouTube..."}
-              className="w-full bg-card border border-border rounded-2xl md:rounded-full py-4 px-5 pl-14 pr-14 text-foreground placeholder:text-muted-foreground caret-primary selection:bg-primary/30 focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10 transition-all text-base shadow-xl"
+              className="w-full bg-card border border-border rounded-full py-4 px-5 pl-14 pr-14 text-foreground placeholder:text-muted-foreground caret-primary selection:bg-primary/30 focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10 transition-all text-base shadow-xl"
             />
             {activeTab === 'apple' ? (
               <AppleMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-[#fa243c]" size={20} />
