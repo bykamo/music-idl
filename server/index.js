@@ -32,6 +32,27 @@ app.use((req, res, next) => {
     next();
 });
 
+const SITE_URL = 'https://musicidl.web.id';
+
+app.get('/robots.txt', (req, res) => {
+    res.type('text/plain').send(`User-agent: *
+Allow: /
+Sitemap: ${SITE_URL}/sitemap.xml
+`);
+});
+
+app.get('/sitemap.xml', (req, res) => {
+    res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${SITE_URL}/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
+`);
+});
+
 // Simple in-memory Daily Download Limiter (5 downloads per IP per day)
 const downloadCounts = {};
 setInterval(() => {
