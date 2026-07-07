@@ -51,6 +51,7 @@ const API_BASE = '/api';
 
 function App() {
   const [query, setQuery] = useState('');
+  const [directDownload, setDirectDownload] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -242,6 +243,23 @@ function App() {
 
   const triggerDownload = async (url: string, title: string, videoId: string, metadata?: { artist?: string; image?: string; album?: string }) => {
     setDownloading(videoId);
+    
+    if (directDownload) {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      
+      setTimeout(() => {
+          if (document.body.contains(link)) document.body.removeChild(link);
+          setDownloading(null);
+          setDownloadSuccess(true);
+      }, 2000);
+      return;
+    }
+
     const params = new URLSearchParams({
       url,
       filename: `${title}.mp3`,
@@ -469,6 +487,21 @@ function App() {
                 </button>
               )}
             </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <label className="relative flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={directDownload}
+                onChange={(e) => setDirectDownload(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              <span className="text-xs font-semibold text-muted-foreground peer-checked:text-foreground transition-colors">
+                Unduh Cepat (Bypass Timeout Vercel / Tanpa Metadata)
+              </span>
+            </label>
           </div>
           
           <div className="mt-4 flex flex-col items-center gap-3">
