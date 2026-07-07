@@ -6,45 +6,43 @@ Aplikasi Web untuk mengunduh lagu dari YouTube dan Apple Music dengan kualitas t
 
 * `/client`: Frontend menggunakan React + Vite + TypeScript + Tailwind CSS.
 * `/server`: Backend menggunakan Node.js + Express.
-* `/vercel.json`: Konfigurasi deployment serverless untuk Vercel.
 
 ## Persiapan & Konfigurasi
 
 Buat file `.env` di root folder dengan konfigurasi berikut:
 
 ```env
-PORT=5200
+PORT=5000
 API_KEY=R0yZv
 BACKUP_API_KEY=t0uQP
 ```
 
-* `PORT`: Port server backend (default: 5200).
+* `PORT`: Port server backend (default: 5000).
 * `API_KEY`: API Key Utama untuk TheresaV API.
 * `BACKUP_API_KEY`: API Key Cadangan untuk TheresaV API.
 
-## Cara Menjalankan Lokal
+## Cara Menjalankan Menggunakan Docker
 
-1. **Install Dependensi & Build Frontend**:
+Anda dapat menjalankan aplikasi ini dengan mudah menggunakan Docker atau Docker Compose.
+
+### Menggunakan Docker Compose (Direkomendasikan)
+
+1. Pastikan Docker dan Docker Compose sudah terinstal di komputer Anda.
+2. Jalankan perintah berikut di root folder project:
    ```bash
-   # Di folder server
-   cd server
-   npm install
-
-   # Di folder client
-   cd ../client
-   npm install
-   npm run build
+   docker-compose up -d --build
    ```
+3. Buka browser dan akses `http://localhost:5000`.
 
-2. **Jalankan Aplikasi**:
+### Menggunakan Docker CLI secara Manual
+
+1. Build image Docker:
    ```bash
-   # Di folder server
-   cd ../server
-   npm run start
+   docker build -t music-idl .
    ```
-   Buka browser dan buka `http://localhost:5200`.
+2. Jalankan container:
+   ```bash
+   docker run -d -p 5000:5000 --env-file .env --name music-idl-app music-idl
+   ```
+3. Buka browser dan akses `http://localhost:5000`.
 
-## Deployment ke Vercel
-
-Aplikasi ini sudah dikonfigurasi dengan file `vercel.json` dan root `package.json`. 
-Cukup sambungkan repository GitHub Anda ke Vercel, lalu Vercel akan otomatis mendeteksi konfigurasi build dan men-deploy aplikasi secara utuh.
