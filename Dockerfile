@@ -31,6 +31,6 @@ COPY --from=build-frontend /app/server/dist ./dist
 
 # Final optimization: Remove unnecessary files and set environment
 ENV NODE_ENV=production
-EXPOSE 5000
+EXPOSE 5200
 
 CMD ["node", "index.js"]

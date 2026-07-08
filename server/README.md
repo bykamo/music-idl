@@ -39,7 +39,7 @@ pm2 startup
 ```
 
 ### 4. Akses Aplikasi
-Aplikasi akan berjalan di port `5000` (atau port di `.env`). Anda bisa mengaksesnya langsung via IP VPS atau menggunakan Nginx sebagai Reverse Proxy.
+Aplikasi akan berjalan di port `5200` (atau port di `.env`). Anda bisa mengaksesnya langsung via IP VPS atau menggunakan Nginx sebagai Reverse Proxy.
 
 ---
 

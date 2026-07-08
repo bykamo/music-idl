@@ -9,7 +9,7 @@ const compression = require('compression');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5200;
 
 // API KEY CONFIGURATION
 const API_KEY = process.env.API_KEY;

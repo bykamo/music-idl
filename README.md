@@ -12,12 +12,12 @@ Aplikasi Web untuk mengunduh lagu dari YouTube dan Apple Music dengan kualitas t
 Buat file `.env` di root folder dengan konfigurasi berikut:
 
 ```env
-PORT=5000
+PORT=5200
 API_KEY=R0yZv
 BACKUP_API_KEY=t0uQP
 ```
 
-* `PORT`: Port server backend (default: 5000).
+* `PORT`: Port server backend (default: 5200).
 * `API_KEY`: API Key Utama untuk TheresaV API.
 * `BACKUP_API_KEY`: API Key Cadangan untuk TheresaV API.
 
@@ -32,7 +32,7 @@ Anda dapat menjalankan aplikasi ini dengan mudah menggunakan Docker atau Docker 
    ```bash
    docker-compose up -d --build
    ```
-3. Buka browser dan akses `http://localhost:5000`.
+3. Buka browser dan akses `http://localhost:5200`.
 
 ### Menggunakan Docker CLI secara Manual
 
@@ -42,7 +42,6 @@ Anda dapat menjalankan aplikasi ini dengan mudah menggunakan Docker atau Docker 
    ```
 2. Jalankan container:
    ```bash
-   docker run -d -p 5000:5000 --env-file .env --name music-idl-app music-idl
+   docker run -d -p 5200:5200 --env-file .env --name music-idl-app music-idl
    ```
-3. Buka browser dan akses `http://localhost:5000`.
-
+3. Buka browser dan akses `http://localhost:5200`.
