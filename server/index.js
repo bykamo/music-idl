@@ -119,9 +119,9 @@ const checkDownloadLimit = (req, res, next) => {
     }
 
     if (downloadCounts[cleanIp].count >= 5) {
-        return res.status(429).json({ 
-            error: 'LIMIT_REACHED', 
-            message: 'Anda telah mencapai batas maksimal 5 unduhan per hari.' 
+        return res.status(429).json({
+            error: 'LIMIT_REACHED',
+            message: 'Anda telah mencapai batas maksimal 5 unduhan per hari.'
         });
     }
 
@@ -229,8 +229,8 @@ app.get('/api/external-info', async (req, res) => {
         } catch (err) {
             console.error(`Provider ${provider.name} failed for external-info (Main Key):`, err.message);
         }
-        
-        if(BACKUP_API_KEY) {
+
+        if (BACKUP_API_KEY) {
             try {
                 const response = await axios.get(provider.getUrl(videoId, BACKUP_API_KEY), { timeout: 10000 });
                 const parsed = provider.parse(response.data);
@@ -291,23 +291,23 @@ app.get('/api/download', checkDownloadLimit, async (req, res) => {
                         status: true
                     });
                 } else if (response.data.message && response.data.message.toLowerCase().includes('limit')) {
-                     return res.status(403).json({ error: 'API_LIMIT_REACHED', message: 'Limit Server Apple Music (Utama & Cadangan) telah habis hari ini.' });
+                    return res.status(403).json({ error: 'API_LIMIT_REACHED', message: 'Limit Server Apple Music (Utama & Cadangan) telah habis hari ini.' });
                 }
             } catch (err) {
-                 console.error(`Apple Music API (Backup) failed:`, err.message);
-                 if (err.response?.data?.message && err.response.data.message.toLowerCase().includes('limit')) {
+                console.error(`Apple Music API (Backup) failed:`, err.message);
+                if (err.response?.data?.message && err.response.data.message.toLowerCase().includes('limit')) {
                     return res.status(403).json({ error: 'API_LIMIT_REACHED', message: 'Limit Server Apple Music (Utama & Cadangan) telah habis hari ini.' });
                 }
             }
         }
-        
-        if(!isSuccess) {
+
+        if (!isSuccess) {
             return res.status(500).json({ error: 'Gagal memproses link dari Apple Music. Server kemungkinan sedang limit.' });
         }
     }
 
     const videoId = v || (targetUrl.match(/^.*(?:(?:youtu\.be\/|v\/|vi\/|u\/\w\/|embed\/|shorts\/)|(?:(?:watch)?\?v(?:i)?=|\&v(?:i)?=))([^#\&\?]*).*/)?.[1]);
-    
+
     if (videoId && videoId.length === 11) {
         for (const provider of PROVIDERS) {
             let isSuccess = false;
@@ -352,7 +352,7 @@ app.get('/api/url-info', async (req, res) => {
             if (data.status && data.result?.success) {
                 const meta = data.result.metadata;
                 return res.json({
-                    videoId: `am-${Date.now()}`, 
+                    videoId: `am-${Date.now()}`,
                     name: meta.title || 'Unknown Title',
                     artist: { name: meta.artist || 'Unknown Artist' },
                     thumbnails: [{ url: meta.thumbnail, width: 1200, height: 630 }],
@@ -459,12 +459,12 @@ app.get('/api/proxy-download', async (req, res) => {
         let finalDownloadUrl = url;
         try {
             // Use a quick HEAD or small GET to check if it's a JSON response
-            const probe = await axios.get(url, { 
-                timeout: 5000, 
+            const probe = await axios.get(url, {
+                timeout: 5000,
                 headers: { 'Range': 'bytes=0-512' },
-                validateStatus: () => true 
+                validateStatus: () => true
             });
-            
+
             const contentType = probe.headers['content-type'] || '';
             if (contentType.includes('application/json')) {
                 // If it's JSON, get the full body to check status
@@ -526,12 +526,12 @@ app.get('/api/proxy-download', async (req, res) => {
                         finalImageUrl = image.replace(/\/\d+x\d+bb\.jpg$/, '/800x800bb.jpg');
                     }
 
-                    const imgResponse = await axios.get(finalImageUrl, { 
-                        responseType: 'arraybuffer', 
+                    const imgResponse = await axios.get(finalImageUrl, {
+                        responseType: 'arraybuffer',
                         timeout: 15000,
                         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
                     });
-                    
+
                     finalArtworkBuffer = await sharp(Buffer.from(imgResponse.data))
                         .trim()
                         .resize(512, 512, { fit: 'cover' })
@@ -563,8 +563,8 @@ app.get('/api/proxy-download', async (req, res) => {
             const outputBuffer = (finalBuffer instanceof Buffer) ? finalBuffer : cleanMp3Buffer;
 
             const cleanFilename = (filename || 'audio.mp3').replace(/[/\\?%*:|"<>]/g, '-');
-            const safeFilename = cleanFilename.replace(/[^\x20-\x7E]/g, '?'); 
-            
+            const safeFilename = cleanFilename.replace(/[^\x20-\x7E]/g, '?');
+
             res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(cleanFilename)}`);
             res.setHeader('Content-Type', 'audio/mpeg');
             res.setHeader('Content-Length', outputBuffer.length);
@@ -585,7 +585,7 @@ app.get('/api/proxy-download', async (req, res) => {
             const cleanFilename = (filename || 'file').replace(/[/\\?%*:|"<>]/g, '-');
             const safeFilename = cleanFilename.replace(/[^\x20-\x7E]/g, '?');
             const contentType = response.headers['content-type'] || 'application/octet-stream';
-            
+
             res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(cleanFilename)}`);
             res.setHeader('Content-Type', contentType);
             if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
