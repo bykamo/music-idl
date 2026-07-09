@@ -122,17 +122,17 @@ const DialogDescription = forwardRef<
 ));
 DialogDescription.displayName = DialogPrimitive.Description.displayName;
 
-import { Badge } from "./badge-2";
-import { Button } from "./button-1";
+import { Badge } from "./badge";
+import { Button } from "./button";
 
-export function LimitDialog({ 
-  isOpen, 
-  onClose, 
-  title = "Batas Unduhan Tercapai", 
+export function LimitDialog({
+  isOpen,
+  onClose,
+  title = "Batas Unduhan Tercapai",
   description = "Anda telah mencapai batas maksimal 5 unduhan per hari. Silakan coba lagi besok.",
   isLimit = true,
-}: { 
-  isOpen: boolean; 
+}: {
+  isOpen: boolean;
   onClose: () => void;
   title?: string;
   description?: string;
@@ -141,15 +141,15 @@ export function LimitDialog({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[300px] w-[90%] max-w-[300px] border border-gray-800 bg-gray-950 p-5 text-gray-100 shadow-2xl rounded-xl space-y-3 relative">
-        <button 
+        <button
           onClick={onClose}
           className="absolute -top-3 -right-3 rounded-full bg-gray-900 border border-gray-800 p-1.5 hover:bg-gray-800 transition-colors shadow-lg z-10"
         >
-            <X className="h-4 w-4 text-gray-400 hover:text-white" />
+          <X className="h-4 w-4 text-gray-400 hover:text-white" />
         </button>
-        <p className="font-medium text-white">{title}</p>
-        <p className="text-sm text-gray-400 leading-relaxed">{description}</p>
-        
+        <DialogTitle className="font-medium text-white">{title}</DialogTitle>
+        <DialogDescription className="text-sm text-gray-400 leading-relaxed">{description}</DialogDescription>
+
         {isLimit && (
           <div className="flex items-center space-x-2 pt-1">
             <Badge variant="secondary" className="bg-red-900/30 text-red-400 border-red-900/50 text-[10px] px-1.5 py-0">
@@ -158,7 +158,7 @@ export function LimitDialog({
             <span className="text-[11px] text-gray-500">Kuota 5/5 telah terpenuhi hari ini.</span>
           </div>
         )}
-        
+
         <div className="pt-3 flex justify-end">
           <Button onClick={onClose} className="bg-gray-800 hover:bg-gray-700 text-white text-xs px-4 py-1.5 h-auto">Mengerti</Button>
         </div>

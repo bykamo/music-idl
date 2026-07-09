@@ -6,6 +6,8 @@ const path = require('path');
 const NodeID3 = require('node-id3');
 const sharp = require('sharp');
 const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -20,11 +22,31 @@ if (!API_KEY || !BACKUP_API_KEY) {
 }
 
 app.use(compression());
-app.use(cors());
+
+// Restricted CORS configuration for production security
+const allowedOrigins = ['https://app.musicidl.web.id', 'https://musicidl.web.id', 'http://localhost:5200'];
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    }
+}));
+
 app.use(express.json());
 
 // Trust Proxy for accurate IP on VPS
 app.set('trust proxy', 1);
+
+// General Rate Limiter to prevent API abuse/spam
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: { error: 'TOO_MANY_REQUESTS', message: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi nanti.' }
+});
+app.use('/api/', apiLimiter);
 
 // Logger
 app.use((req, res, next) => {
@@ -32,7 +54,7 @@ app.use((req, res, next) => {
     next();
 });
 
-const SITE_URL = 'https://musicidl.web.id';
+const SITE_URL = 'https://app.musicidl.web.id';
 
 app.get('/robots.txt', (req, res) => {
     res.type('text/plain').send(`User-agent: *
@@ -53,15 +75,32 @@ app.get('/sitemap.xml', (req, res) => {
 `);
 });
 
-// Simple in-memory Daily Download Limiter (5 downloads per IP per day)
-const downloadCounts = {};
+// File-based Daily Download Limiter (5 downloads per IP per day)
+const DB_FILE = path.join(__dirname, 'downloads.json');
+let downloadCounts = {};
+
+try {
+    if (fs.existsSync(DB_FILE)) {
+        downloadCounts = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    }
+} catch (err) {
+    console.error('Failed to load downloads database:', err.message);
+}
+
+const saveDownloadCounts = () => {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(downloadCounts, null, 2), 'utf8');
+    } catch (err) {
+        console.error('Failed to save downloads database:', err.message);
+    }
+};
+
 setInterval(() => {
     // Reset limit counts at midnight every day
     const now = new Date();
     if (now.getHours() === 0 && now.getMinutes() === 0) {
-        for (const key in downloadCounts) {
-            delete downloadCounts[key];
-        }
+        downloadCounts = {};
+        saveDownloadCounts();
         console.log('Daily download counts reset.');
     }
 }, 60000); // check every minute
@@ -94,6 +133,7 @@ const incrementDownloadCount = (ip) => {
     if (downloadCounts[ip]) {
         downloadCounts[ip].count++;
         console.log(`IP ${ip} download count: ${downloadCounts[ip].count}/5`);
+        saveDownloadCounts();
     }
 };
 
@@ -340,7 +380,7 @@ app.get('/api/url-info', async (req, res) => {
     if (videoId) {
         for (const provider of PROVIDERS) {
             try {
-                const response = await axios.get(provider.getUrl(videoId, API_KEY), { timeout: 15000 });
+                const response = await axios.get(provider.getUrl(videoId, API_KEY), { timeout: 45000 });
                 const parsed = provider.parse(response.data);
                 if (parsed) {
                     return res.json({
@@ -357,7 +397,7 @@ app.get('/api/url-info', async (req, res) => {
                 console.error(`YouTube url-info failed (Main Key):`, err.message);
                 if (BACKUP_API_KEY) {
                     try {
-                        const response = await axios.get(provider.getUrl(videoId, BACKUP_API_KEY), { timeout: 15000 });
+                        const response = await axios.get(provider.getUrl(videoId, BACKUP_API_KEY), { timeout: 45000 });
                         const parsed = provider.parse(response.data);
                         if (parsed) {
                             return res.json({
@@ -379,6 +419,35 @@ app.get('/api/url-info', async (req, res) => {
     }
 
     res.status(400).json({ error: 'Gagal mendapatkan informasi dari link tersebut' });
+});
+
+app.get('/api/fallback-download', async (req, res) => {
+    const { videoId } = req.query;
+    if (!videoId) return res.status(400).json({ error: 'Video ID is required' });
+
+    for (const provider of PROVIDERS) {
+        try {
+            const response = await axios.get(provider.getUrl(videoId, API_KEY), { timeout: 45000 });
+            const parsed = provider.parse(response.data);
+            if (parsed) {
+                return res.json({ status: true, ...parsed });
+            }
+        } catch (err) {
+            console.error(`Fallback download failed (Main Key):`, err.message);
+            if (BACKUP_API_KEY) {
+                try {
+                    const response = await axios.get(provider.getUrl(videoId, BACKUP_API_KEY), { timeout: 45000 });
+                    const parsed = provider.parse(response.data);
+                    if (parsed) {
+                        return res.json({ status: true, ...parsed });
+                    }
+                } catch (backupErr) {
+                    console.error(`Fallback download failed (Backup Key):`, backupErr.message);
+                }
+            }
+        }
+    }
+    res.status(400).json({ error: 'Gagal mendapatkan data fallback' });
 });
 
 app.get('/api/proxy-download', async (req, res) => {
@@ -542,10 +611,6 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-    app.listen(port, () => {
-        console.log(`Server running at http://localhost:${port}`);
-    });
-}
-
-module.exports = app;
+app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+});

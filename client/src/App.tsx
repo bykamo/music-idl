@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music } from 'lucide-react';
+import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2 } from 'lucide-react';
 import { AppleMusicIcon } from '@/components/ui/apple-music-icon';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
 import { NeuralNoise } from '@/components/ui/neural-noise';
@@ -435,10 +435,10 @@ function App() {
         </div>
 
         <div className="flex justify-center gap-3 mb-6">
-          <button onClick={() => setActiveTab('youtube')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'youtube' ? 'bg-[#FF0000] text-white shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
+          <button onClick={() => setActiveTab('youtube')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'youtube' ? 'bg-primary text-primary-foreground shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
             <YouTubeMusicIcon size={18} /> YouTube
           </button>
-          <button onClick={() => setActiveTab('apple')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'apple' ? 'bg-[#fa243c] text-white shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
+          <button onClick={() => setActiveTab('apple')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'apple' ? 'bg-primary text-primary-foreground shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
             <AppleMusicIcon size={18} /> Apple Music
           </button>
         </div>
@@ -448,18 +448,20 @@ function App() {
             <input
               ref={inputRef}
               type="text"
+              id="music-url-input"
+              name="music-url"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={activeTab === 'apple' ? "Tempel link Apple Music..." : "Tempel link YouTube..."}
               className="w-full bg-card border border-border rounded-full py-4 px-5 pl-14 pr-14 text-foreground placeholder:text-muted-foreground caret-primary selection:bg-primary/30 focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10 transition-all text-base shadow-xl"
             />
             {activeTab === 'apple' ? (
-              <AppleMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-[#fa243c]" size={20} />
+              <AppleMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-primary" size={20} />
             ) : (
-              <YouTubeMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-[#FF0000]" size={20} />
+              <YouTubeMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-primary" size={20} />
             )}
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2 z-10">
-              {!query.trim() && (
+              {!query.trim() ? (
                 <button 
                   type="button" 
                   onClick={handlePaste} 
@@ -467,6 +469,20 @@ function App() {
                   title="Tempel dari clipboard"
                 >
                   <ClipboardPaste size={18} />
+                </button>
+              ) : (
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setQuery('');
+                    setResults([]);
+                    setDownloadSuccess(false);
+                    inputRef.current?.focus();
+                  }} 
+                  className="bg-card hover:bg-muted active:scale-90 text-foreground hover:text-red-500 p-2 rounded-full transition-all flex items-center justify-center min-w-[36px] min-h-[36px] shadow-sm border border-border"
+                  title="Hapus tautan"
+                >
+                  <Trash2 size={18} />
                 </button>
               )}
             </div>
@@ -476,7 +492,7 @@ function App() {
             <button
               type="submit"
               disabled={loading}
-              className="w-fit px-8 py-3 bg-[#FF0000] hover:bg-[#cc0000] active:scale-[0.98] text-white rounded-full font-bold transition-all disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg text-base focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
+              className="w-fit px-8 py-3 bg-primary hover:opacity-90 active:scale-[0.98] text-primary-foreground rounded-full font-bold transition-all disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg text-base focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
             >
               {loading ? <><Loader2 className="animate-spin" size={20} /> Memproses...</> : <><Download size={20} /> Unduh Musik</>}
             </button>
@@ -501,12 +517,12 @@ function App() {
         {loading && <SearchSkeleton />}
 
         {!loading && results.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="flex flex-col items-center gap-6 max-w-sm md:max-w-lg mx-auto w-full">
           {results.map((item) => {
             const ext = detailedInfo[item.videoId];
             const platform = activeTab === 'apple' || item.videoId.startsWith('am-') ? 'Apple Music' : 'YouTube Music';
             return (
-              <div key={item.videoId} className="glass-card flex flex-col group relative hover:-translate-y-1">
+              <div key={item.videoId} className="glass-card flex flex-col group relative hover:-translate-y-1 w-full">
                 <div className="relative aspect-square overflow-hidden bg-muted">
                   <img
                     src={getBestThumbnail(item)}
