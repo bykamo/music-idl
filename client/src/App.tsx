@@ -544,7 +544,7 @@ function App() {
               >
                 {loading && searchProgress !== null && (
                   <div 
-                    className="absolute inset-y-0 left-0 bg-primary/20 transition-all duration-150" 
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out" 
                     style={{ width: `${searchProgress}%` }}
                   />
                 )}
@@ -665,7 +665,7 @@ function App() {
                         >
                           {downloading === item.videoId && downloadProgress !== null && (
                             <div 
-                              className="absolute inset-y-0 left-0 bg-primary/20 transition-all duration-150" 
+                              className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out" 
                               style={{ width: `${downloadProgress}%` }}
                             />
                           )}
