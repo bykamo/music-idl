@@ -124,8 +124,8 @@ function App() {
     const progressInterval = setInterval(() => {
       setSearchProgress((prev) => {
         if (prev === null) return 0;
+        if (prev >= 99) return 99;
         if (prev >= 92) return prev + 1;
-        if (prev >= 98) return 98;
         return prev + 8;
       });
     }, 600);
@@ -278,7 +278,7 @@ function App() {
         responseType: 'blob',
         onDownloadProgress: (progressEvent) => {
           if (progressEvent.total) {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            const percentCompleted = Math.min(100, Math.round((progressEvent.loaded * 100) / progressEvent.total));
             setDownloadProgress(percentCompleted);
           } else {
             // Fallback estimation
