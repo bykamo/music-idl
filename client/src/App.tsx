@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2 } from 'lucide-react';
 import { AppleMusicIcon } from '@/components/ui/apple-music-icon';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
-import { NeuralNoise } from '@/components/ui/neural-noise';
+import DotField from '@/components/ui/DotField';
 import Loader from '@/components/ui/loader';
 import { SearchSkeleton } from '@/components/ui/search-skeleton';
 import { AnimatedThemeToggle } from '@/components/ui/theme-toggle';
@@ -308,7 +308,7 @@ function App() {
       link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
-      
+
       setTimeout(() => {
         if (document.body.contains(link)) document.body.removeChild(link);
         setDownloading(null);
@@ -379,21 +379,12 @@ function App() {
             setIsLimitOpen(true);
           }
         } catch (e: any) {
-          if (e.response?.data?.message) {
-            setErrorDialog({
-              isOpen: true,
-              title: 'Gagal',
-              message: e.response.data.message,
-              isLimit: false
-            });
-          } else {
-            setErrorDialog({
-              isOpen: true,
-              title: 'Gagal',
-              message: 'Gagal mendownload lagu. Kemungkinan semua limit server telah habis.',
-              isLimit: false
-            });
-          }
+          setErrorDialog({
+            isOpen: true,
+            title: 'Gagal',
+            message: e.response?.data?.message || 'Gagal mendownload lagu. Silakan coba beberapa saat lagi.',
+            isLimit: false
+          });
         }
       }
     } finally { setDownloading(null); }
@@ -467,7 +458,21 @@ function App() {
       />
       {isInitialLoading && <Loader />}
       <div className="relative min-h-screen w-full bg-background transition-colors duration-300 overflow-x-hidden">
-        <NeuralNoise color={[1.0, 0.0, 0.0]} opacity={0.5} />
+        <DotField
+          className="absolute inset-0 z-0 pointer-events-none"
+          dotRadius={5}
+          dotSpacing={14}
+          bulgeStrength={67}
+          glowRadius={160}
+          sparkle={false}
+          waveAmplitude={0}
+          cursorRadius={100}
+          cursorForce={0.8}
+          bulgeOnly={false}
+          gradientFrom={theme === 'dark' ? 'rgba(185, 28, 28, 0.35)' : 'rgba(185, 28, 28, 0.15)'}
+          gradientTo={theme === 'dark' ? 'rgba(185, 28, 28, 0.15)' : 'rgba(185, 28, 28, 0.05)'}
+          glowColor="transparent"
+        />
         <div className="max-w-5xl mx-auto px-4 py-8 relative z-10">
           <div className="fixed top-6 right-6 z-50">
             <AnimatedThemeToggle theme={theme} setTheme={setTheme} />
@@ -543,28 +548,28 @@ function App() {
                 className={`w-fit relative px-8 py-3 rounded-full font-bold transition-all disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg text-base focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 overflow-hidden ${loading ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]'}`}
               >
                 {loading && searchProgress !== null && (
-                  <div 
-                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out" 
+                  <div
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out"
                     style={{ width: `${searchProgress}%` }}
                   />
                 )}
-                
+
                 <span className="relative z-10 flex items-center gap-2">
                   {loading ? (
                     searchProgress !== null ? (
                       <>
-                        <Loader2 className="animate-spin" size={20} /> 
+                        <Loader2 className="animate-spin" size={20} />
                         {`Memproses (${searchProgress}%)`}
                       </>
                     ) : (
                       <>
-                        <Loader2 className="animate-spin" size={20} /> 
+                        <Loader2 className="animate-spin" size={20} />
                         Memproses...
                       </>
                     )
                   ) : (
                     <>
-                      <Download size={20} /> 
+                      <Download size={20} />
                       Unduh Musik
                     </>
                   )}
@@ -658,14 +663,14 @@ function App() {
                         </div>
                       )}
                       <div className="mt-auto pt-2 flex justify-center">
-                        <button 
-                          onClick={() => downloadMusic(item.videoId, ext?.title || item.name)} 
-                          disabled={!!downloading} 
+                        <button
+                          onClick={() => downloadMusic(item.videoId, ext?.title || item.name)}
+                          disabled={!!downloading}
                           className={`w-full relative px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 overflow-hidden ${downloading === item.videoId ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]'}`}
                         >
                           {downloading === item.videoId && downloadProgress !== null && (
-                            <div 
-                              className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out" 
+                            <div
+                              className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out"
                               style={{ width: `${downloadProgress}%` }}
                             />
                           )}
@@ -674,7 +679,7 @@ function App() {
                             {downloading === item.videoId ? (
                               downloadProgress !== null ? (
                                 <>
-                                  <Loader2 className="animate-spin" size={16} /> 
+                                  <Loader2 className="animate-spin" size={16} />
                                   {`Mengunduh (${downloadProgress}%)`}
                                 </>
                               ) : (
