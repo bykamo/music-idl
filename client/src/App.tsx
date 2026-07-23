@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2 } from 'lucide-react';
-import { AppleMusicIcon } from '@/components/ui/apple-music-icon';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
 import DotField from '@/components/ui/DotField';
 import Loader from '@/components/ui/loader';
@@ -55,7 +54,6 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [searchProgress, setSearchProgress] = useState<number | null>(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
-  const [activeTab, setActiveTab] = useState<'youtube' | 'apple'>('youtube');
   const [downloading, setDownloading] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [detailedInfo, setDetailedInfo] = useState<Record<string, ExternalInfo>>({});
@@ -82,11 +80,6 @@ function App() {
     }, 500);
     return () => clearTimeout(timer);
   }, []);
-
-  useEffect(() => {
-    if (query.includes('music.apple.com')) setActiveTab('apple');
-    else if (query.includes('youtu')) setActiveTab('youtube');
-  }, [query]);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -131,84 +124,57 @@ function App() {
     }, 600);
 
     try {
-      if (activeTab === 'apple' || query.includes('music.apple.com')) {
-        // Apple Music Flow
-        const placeholderId = `am-${Date.now()}`;
+      // YouTube Flow
+      const extractedId = extractVideoId(query);
+      if (extractedId) {
+        const normalizedUrl = `https://www.youtube.com/watch?v=${extractedId}`;
         setResults([{
-          videoId: placeholderId,
-          name: 'Apple Music Song (Processing...)',
+          videoId: extractedId,
+          name: 'YouTube Video (Processing...)',
           artist: { name: 'Auto loading' },
-          thumbnails: [{ url: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/3d/0d/1d/3d0d1d23-2345-2345-2345-234523452345/source/512x512bb.jpg', width: 480, height: 360 }],
-          type: 'SONG',
+          thumbnails: [{ url: `https://i.ytimg.com/vi/${extractedId}/hqdefault.jpg`, width: 480, height: 360 }],
+          type: 'VIDEO',
           isDirect: true
         }] as SearchResult[]);
 
         try {
-          const response = await axios.get(`${API_BASE}/url-info?url=${encodeURIComponent(query)}`);
-          const data = response.data;
-          const videoId = data.videoId || placeholderId;
-          setResults([data]);
-          if (data.externalData?.download_url) {
-            setDetailedInfo(prev => ({ ...prev, [videoId]: data.externalData }));
-          }
+          const response = await axios.get(`${API_BASE}/url-info?url=${encodeURIComponent(normalizedUrl)}`);
+          if (response.data) {
+            setResults([response.data]);
+            if (response.data.externalData) {
+              setDetailedInfo(prev => ({ ...prev, [extractedId]: response.data.externalData }));
+            }
+          } else { throw new Error('No Data'); }
         } catch (err) {
-          console.error('Apple Music failed', err);
-          alert('Gagal mengambil informasi dari link Apple Music.');
-          setResults([]);
+          try {
+            const fallback = await axios.get(`${API_BASE}/fallback-download?videoId=${extractedId}`);
+            if (fallback.data && fallback.data.status) {
+              const data = fallback.data;
+              const resObj = {
+                videoId: extractedId,
+                name: data.title || 'YouTube Video',
+                artist: { name: data.channel || 'Unknown Artist' },
+                thumbnails: [{ url: data.thumbnail || `https://i.ytimg.com/vi/${extractedId}/hqdefault.jpg`, width: 1280, height: 720 }],
+                type: 'VIDEO',
+                isDirect: true
+              };
+              setResults([resObj]);
+              setDetailedInfo(prev => ({ ...prev, [extractedId]: data }));
+            } else { throw new Error('No fallback data'); }
+          } catch (e) {
+            setErrorDialog({
+              isOpen: true,
+              title: 'Gagal',
+              message: 'Gagal mendapatkan informasi video.',
+              isLimit: false
+            });
+            setResults([]);
+          }
         }
       } else {
-        // YouTube Flow
-        const extractedId = extractVideoId(query);
-        if (extractedId) {
-          const normalizedUrl = `https://www.youtube.com/watch?v=${extractedId}`;
-          setResults([{
-            videoId: extractedId,
-            name: 'YouTube Video (Processing...)',
-            artist: { name: 'Auto loading' },
-            thumbnails: [{ url: `https://i.ytimg.com/vi/${extractedId}/hqdefault.jpg`, width: 480, height: 360 }],
-            type: 'VIDEO',
-            isDirect: true
-          }] as SearchResult[]);
-
-          try {
-            const response = await axios.get(`${API_BASE}/url-info?url=${encodeURIComponent(normalizedUrl)}`);
-            if (response.data) {
-              setResults([response.data]);
-              if (response.data.externalData) {
-                setDetailedInfo(prev => ({ ...prev, [extractedId]: response.data.externalData }));
-              }
-            } else { throw new Error('No Data'); }
-          } catch (err) {
-            try {
-              const fallback = await axios.get(`${API_BASE}/fallback-download?videoId=${extractedId}`);
-              if (fallback.data && fallback.data.status) {
-                const data = fallback.data;
-                const resObj = {
-                  videoId: extractedId,
-                  name: data.title || 'YouTube Video',
-                  artist: { name: data.channel || 'Unknown Artist' },
-                  thumbnails: [{ url: data.thumbnail || `https://i.ytimg.com/vi/${extractedId}/hqdefault.jpg`, width: 1280, height: 720 }],
-                  type: 'VIDEO',
-                  isDirect: true
-                };
-                setResults([resObj]);
-                setDetailedInfo(prev => ({ ...prev, [extractedId]: data }));
-              } else { throw new Error('No fallback data'); }
-            } catch (e) {
-              setErrorDialog({
-                isOpen: true,
-                title: 'Gagal',
-                message: 'Gagal mendapatkan informasi video.',
-                isLimit: false
-              });
-              setResults([]);
-            }
-          }
-        } else {
-          // Normal Search
-          const response = await axios.get(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
-          setResults(response.data);
-        }
+        // Normal Search
+        const response = await axios.get(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+        setResults(response.data);
       }
     } catch (err) {
       console.error('Action failed', err);
@@ -487,15 +453,6 @@ function App() {
             </p>
           </div>
 
-          <div className="flex justify-center gap-3 mb-6">
-            <button onClick={() => setActiveTab('youtube')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'youtube' ? 'bg-primary text-primary-foreground shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
-              <YouTubeMusicIcon size={18} /> YouTube
-            </button>
-            <button onClick={() => setActiveTab('apple')} className={`px-6 py-2.5 rounded-full font-bold transition-all flex items-center gap-2 ${activeTab === 'apple' ? 'bg-primary text-primary-foreground shadow-lg scale-105' : 'bg-card text-muted-foreground hover:bg-muted border border-border'}`}>
-              <AppleMusicIcon size={18} /> Apple Music
-            </button>
-          </div>
-
           <form onSubmit={handleAction} className="relative max-w-2xl mx-auto mb-10 md:mb-12">
             <div className="relative group">
               <input
@@ -505,14 +462,10 @@ function App() {
                 name="music-url"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={activeTab === 'apple' ? "Tempel link Apple Music..." : "Tempel link YouTube..."}
+                placeholder="Tempel link YouTube atau ketik judul lagu..."
                 className="w-full bg-card border border-border rounded-full py-4 px-5 pl-14 pr-14 text-foreground placeholder:text-muted-foreground caret-primary selection:bg-primary/30 focus:outline-none focus:border-primary/60 focus:ring-4 focus:ring-primary/10 transition-all text-base shadow-xl"
               />
-              {activeTab === 'apple' ? (
-                <AppleMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-primary" size={20} />
-              ) : (
-                <YouTubeMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-primary" size={20} />
-              )}
+              <YouTubeMusicIcon className="absolute left-5 top-1/2 -translate-y-1/2 text-primary" size={20} />
               <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2 z-10">
                 {!query.trim() ? (
                   <button
@@ -599,7 +552,7 @@ function App() {
             <div className="flex flex-col items-center gap-6 max-w-sm md:max-w-lg mx-auto w-full">
               {results.map((item) => {
                 const ext = detailedInfo[item.videoId];
-                const platform = activeTab === 'apple' || item.videoId.startsWith('am-') ? 'Apple Music' : 'YouTube Music';
+                const platform = 'YouTube Music';
                 return (
                   <div key={item.videoId} className="glass-card flex flex-col group relative hover:-translate-y-1 w-full">
                     <div className="relative aspect-square overflow-hidden bg-muted">
@@ -677,7 +630,7 @@ function App() {
 
                           <span className="relative z-10 flex items-center gap-2">
                             {downloading === item.videoId ? (
-                              downloadProgress !== null ? (
+                              downloadProgress !== null && downloadProgress > 0 ? (
                                 <>
                                   <Loader2 className="animate-spin" size={16} />
                                   {`Mengunduh (${downloadProgress}%)`}
@@ -685,7 +638,7 @@ function App() {
                               ) : (
                                 <>
                                   <Loader2 className="animate-spin" size={16} />
-                                  Menyiapkan...
+                                  Sedang mengunduh di server...
                                 </>
                               )
                             ) : (
@@ -710,7 +663,7 @@ function App() {
               <h2 className="text-2xl font-bold text-foreground">Siap untuk download?</h2>
               <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto text-left">
                 {[
-                  ['1', 'Pilih platform', 'Gunakan YouTube atau Apple Music.'],
+                  ['1', 'Cari musik', 'Ketik judul lagu atau link YouTube.'],
                   ['2', 'Tempel link', 'Masukkan URL musik yang ingin diunduh.'],
                   ['3', 'Unduh musik', 'Cek hasil dan unduh MP3.'],
                 ].map(([step, title, desc]) => (

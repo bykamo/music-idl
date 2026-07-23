@@ -21,6 +21,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
+    "socks-proxy-agent": "^10.1.0",
     "ytmusic-api": "^5.3.1"
   }
 }

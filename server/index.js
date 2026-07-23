@@ -15,7 +15,7 @@ const port = process.env.PORT || 5200;
 app.use(compression());
 
 // Restricted CORS configuration for production security
-const allowedOrigins = ['https://app.musicidl.web.id', 'https://musicidl.web.id', 'http://localhost:5200', 'http://localhost:5173'];
+const allowedOrigins = ['https://app.musicidl.web.id', 'https://musicidl.web.id', 'http://localhost:5200', 'http://localhost:5173', 'http://43.153.205.18:5200', 'http://43.153.205.18'];
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin || allowedOrigins.indexOf(origin) !== -1) {
@@ -103,7 +103,7 @@ if (!fs.existsSync(outputDir)) {
 
 function runEngineDownload(url) {
     return new Promise((resolve, reject) => {
-        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+        const pythonCmd = '/home/ubuntu/music_dl_venv/bin/python3';
         execFile(pythonCmd, [engineScriptPath, url], { cwd: __dirname }, (error, stdout, stderr) => {
             if (error) {
                 console.error('Engine error stderr:', stderr);
@@ -189,6 +189,34 @@ app.get('/api/download', async (req, res) => {
     });
 });
 
+function getYoutubeVideoInfo(url, videoId) {
+    return new Promise((resolve) => {
+        const ytdlpPath = '/home/ubuntu/music_dl_venv/bin/yt-dlp';
+        execFile(ytdlpPath, [
+            '-j',
+            '--proxy', 'socks5://127.0.0.1:40000',
+            '--cookies', '/home/ubuntu/cookies.txt',
+            url
+        ], (error, stdout) => {
+            const defaultTitle = videoId && videoId.length === 11 ? `YouTube Track ${videoId}` : 'YouTube Track';
+            if (error) {
+                console.error('Info extract error:', error.message);
+                return resolve({ title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: '' });
+            }
+            try {
+                const info = JSON.parse(stdout);
+                resolve({
+                    title: info.title || defaultTitle,
+                    uploader: info.uploader || info.artist || 'Music IDL Engine',
+                    thumbnail: info.thumbnail || ''
+                });
+            } catch (e) {
+                resolve({ title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: '' });
+            }
+        });
+    });
+}
+
 app.get('/api/url-info', async (req, res) => {
     const { url } = req.query;
     if (!url) return res.status(400).json({ error: 'URL is required' });
@@ -197,18 +225,20 @@ app.get('/api/url-info', async (req, res) => {
     const match = url.match(regExp);
     const videoId = (match && match[1].length === 11) ? match[1] : `song-${Date.now()}`;
 
+    const info = await getYoutubeVideoInfo(url, videoId);
+
     return res.json({
         videoId: videoId,
-        name: 'Track Ready for Download',
-        artist: { name: 'Music IDL Engine (320kbps)' },
-        thumbnails: [{ url: videoId.length === 11 ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/3d/0d/1d/3d0d1d23-2345-2345-2345-234523452345/source/512x512bb.jpg', width: 480, height: 360 }],
+        name: info.title,
+        artist: { name: info.uploader },
+        thumbnails: [{ url: info.thumbnail || (videoId.length === 11 ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/3d/0d/1d/3d0d1d23-2345-2345-2345-234523452345/source/512x512bb.jpg'), width: 480, height: 360 }],
         type: 'SONG',
         isDirect: true,
         externalData: {
             download_url: `/api/engine-download?url=${encodeURIComponent(url)}`,
-            title: 'Track Ready for Download',
-            channel: 'Music IDL Engine',
-            thumbnail: videoId.length === 11 ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '',
+            title: info.title,
+            channel: info.uploader,
+            thumbnail: info.thumbnail || (videoId.length === 11 ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''),
             status: true,
             bitrate: '320kbps',
             filesize: 8 * 1024 * 1024
