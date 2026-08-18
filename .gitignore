@@ -17,3 +17,5 @@ yarn-error.log
 
 # Runtime data
 server/downloads.json
+cookies.txt
+server/output_music/

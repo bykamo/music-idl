@@ -14,16 +14,10 @@ const port = process.env.PORT || 5200;
 
 app.use(compression());
 
-// Restricted CORS configuration for production security
-const allowedOrigins = ['https://app.musicidl.web.id', 'https://musicidl.web.id', 'http://localhost:5200', 'http://localhost:5173', 'http://43.153.205.18:5200', 'http://43.153.205.18'];
+// Flexible CORS configuration
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    }
+    origin: true,
+    credentials: true
 }));
 
 app.use(express.json());
@@ -103,8 +97,11 @@ if (!fs.existsSync(outputDir)) {
 
 function runEngineDownload(url) {
     return new Promise((resolve, reject) => {
-        const pythonCmd = '/home/ubuntu/music_dl_venv/bin/python3';
-        execFile(pythonCmd, [engineScriptPath, url], { cwd: __dirname }, (error, stdout, stderr) => {
+        const pythonCmd = '/usr/bin/python3.12';
+        const customEnv = Object.assign({}, process.env, {
+            PATH: `/usr/local/bin:/usr/bin:/bin:/home/ubuntu/.deno/bin:/home/ubuntu/bin:${process.env.PATH || ''}`
+        });
+        execFile(pythonCmd, [engineScriptPath, url], { cwd: __dirname, env: customEnv, maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
             if (error) {
                 console.error('Engine error stderr:', stderr);
                 return reject(error);
@@ -189,29 +186,44 @@ app.get('/api/download', async (req, res) => {
     });
 });
 
+async function getOEmbedFallback(url, videoId) {
+    try {
+        const response = await axios.get(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { timeout: 5000 });
+        if (response.data && response.data.title) {
+            return {
+                title: response.data.title,
+                uploader: response.data.author_name || 'YouTube Artist',
+                thumbnail: response.data.thumbnail_url || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '')
+            };
+        }
+    } catch (e) {}
+    const defaultTitle = videoId && videoId.length === 11 ? `YouTube Track ${videoId}` : 'YouTube Track';
+    return { title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '' };
+}
+
 function getYoutubeVideoInfo(url, videoId) {
     return new Promise((resolve) => {
-        const ytdlpPath = '/home/ubuntu/music_dl_venv/bin/yt-dlp';
+        const ytdlpPath = '/home/ubuntu/bin/yt-dlp';
         execFile(ytdlpPath, [
             '-j',
-            '--proxy', 'socks5://127.0.0.1:40000',
-            '--cookies', '/home/ubuntu/cookies.txt',
+            '--cookies', '/home/ubuntu/music-idl/cookies.txt',
             url
-        ], (error, stdout) => {
-            const defaultTitle = videoId && videoId.length === 11 ? `YouTube Track ${videoId}` : 'YouTube Track';
+        ], async (error, stdout) => {
             if (error) {
-                console.error('Info extract error:', error.message);
-                return resolve({ title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: '' });
+                console.error('Info extract error, using oEmbed fallback:', error.message);
+                const fallbackInfo = await getOEmbedFallback(url, videoId);
+                return resolve(fallbackInfo);
             }
             try {
                 const info = JSON.parse(stdout);
                 resolve({
-                    title: info.title || defaultTitle,
+                    title: info.title || (videoId ? `YouTube Track ${videoId}` : 'YouTube Track'),
                     uploader: info.uploader || info.artist || 'Music IDL Engine',
-                    thumbnail: info.thumbnail || ''
+                    thumbnail: info.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '')
                 });
             } catch (e) {
-                resolve({ title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: '' });
+                const fallbackInfo = await getOEmbedFallback(url, videoId);
+                resolve(fallbackInfo);
             }
         });
     });
@@ -291,8 +303,11 @@ app.get('/api/proxy-download', async (req, res) => {
         console.log(`[Engine Proxy] Forwarding to engine-download for: ${targetUrl}`);
         try {
             const { filePath, fileName } = await runEngineDownload(targetUrl);
+            const finalName = (title && !title.startsWith('YouTube Track') && !title.startsWith('Music Download')) 
+                ? `${title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3` 
+                : fileName;
 
-            return res.download(filePath, `${title || fileName}.mp3`, (err) => {
+            return res.download(filePath, finalName, (err) => {
                 if (err) {
                     console.error('File send error:', err.message);
                 }
