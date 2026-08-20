@@ -193,12 +193,13 @@ async function getOEmbedFallback(url, videoId) {
             return {
                 title: response.data.title,
                 uploader: response.data.author_name || 'YouTube Artist',
-                thumbnail: response.data.thumbnail_url || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '')
+                thumbnail: response.data.thumbnail_url || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''),
+                duration: 200
             };
         }
     } catch (e) {}
     const defaultTitle = videoId && videoId.length === 11 ? `YouTube Track ${videoId}` : 'YouTube Track';
-    return { title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '' };
+    return { title: defaultTitle, uploader: 'Music IDL Engine', thumbnail: videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '', duration: 200 };
 }
 
 function getYoutubeVideoInfo(url, videoId) {
@@ -206,7 +207,7 @@ function getYoutubeVideoInfo(url, videoId) {
         const ytdlpPath = '/home/ubuntu/bin/yt-dlp';
         execFile(ytdlpPath, [
             '-j',
-            '--cookies', '/home/ubuntu/music-idl/cookies.txt',
+            '--proxy', 'socks5://127.0.0.1:40000',
             url
         ], async (error, stdout) => {
             if (error) {
@@ -219,7 +220,8 @@ function getYoutubeVideoInfo(url, videoId) {
                 resolve({
                     title: info.title || (videoId ? `YouTube Track ${videoId}` : 'YouTube Track'),
                     uploader: info.uploader || info.artist || 'Music IDL Engine',
-                    thumbnail: info.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '')
+                    thumbnail: info.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''),
+                    duration: info.duration || 200
                 });
             } catch (e) {
                 const fallbackInfo = await getOEmbedFallback(url, videoId);
@@ -238,6 +240,8 @@ app.get('/api/url-info', async (req, res) => {
     const videoId = (match && match[1].length === 11) ? match[1] : `song-${Date.now()}`;
 
     const info = await getYoutubeVideoInfo(url, videoId);
+    const duration = info.duration || 200;
+    const calculatedSize = Math.round(duration * (320 * 1024 / 8)); // 320kbps exact size estimation
 
     return res.json({
         videoId: videoId,
@@ -253,7 +257,8 @@ app.get('/api/url-info', async (req, res) => {
             thumbnail: info.thumbnail || (videoId.length === 11 ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : ''),
             status: true,
             bitrate: '320kbps',
-            filesize: 8 * 1024 * 1024
+            filesize: calculatedSize,
+            duration_sec: duration
         }
     });
 });

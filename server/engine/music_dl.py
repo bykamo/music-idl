@@ -91,7 +91,7 @@ def download_music(url):
             {
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '0',
+                'preferredquality': '320',
             },
             {
                 'key': 'FFmpegMetadata',
