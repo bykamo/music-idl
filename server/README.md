@@ -4,11 +4,14 @@ Dokumen ini menjelaskan cara menjalankan backend server **Music IDL** di VPS ata
 
 ## ⚙️ Prasyarat Server
 1. **Node.js 18+**
-2. **Python 3.8+** dengan `yt-dlp`:
+2. **Python 3.8+** dengan dependensi engine:
    ```bash
-   pip install yt-dlp
+   pip install -r engine/requirements.txt
    ```
 3. **FFmpeg** terinstall dan terdaftar di `PATH` sistem.
+
+Artwork album dicocokkan melalui iTunes Search API. Storefront default adalah
+Indonesia dan dapat diubah lewat environment variable `ITUNES_COUNTRY`.
 
 ---
 

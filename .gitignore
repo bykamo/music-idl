@@ -6,6 +6,8 @@ build/
 npm-debug.log
 yarn-error.log
 .vercel
+__pycache__/
+*.py[cod]
 
 # Environment files
 .env

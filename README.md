@@ -26,7 +26,7 @@ Aplikasi Web modern berkecepatan tinggi untuk mencari dan mengunduh musik dari Y
 Sebelum menjalankan aplikasi, pastikan sistem kamu sudah menginstal:
 
 1. **Node.js** (v18 atau lebih baru) & **npm**
-2. **Python 3** (v3.8 atau lebih baru)
+2. **Python 3** (v3.8 atau lebih baru) dengan dependensi dari `server/engine/requirements.txt`
 3. **FFmpeg** (untuk konversi format ke MP3)
 4. **Cloudflare WARP** (untuk bypass limitasi regional/block IP YouTube)
 
