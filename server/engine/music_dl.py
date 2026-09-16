@@ -16,6 +16,11 @@ ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 ARTWORK_SIZE = 1200
 ITUNES_COUNTRY = os.environ.get("ITUNES_COUNTRY", "ID")
 USER_AGENT = "Music-IDL/1.0"
+DOWNLOAD_PROXY = os.environ.get("DOWNLOAD_PROXY", "").strip()
+DENO_BIN = os.environ.get("DENO_BIN", "deno").strip()
+ALLOW_REMOTE_COMPONENTS = os.environ.get("ALLOW_REMOTE_COMPONENTS", "false").lower() == "true"
+MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "900"))
+MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
 
 PRESENTATION_NOISE = re.compile(
     r"\b(?:official\s+(?:music\s+)?video|official\s+audio|audio\s+official|"
@@ -154,6 +159,23 @@ def text_similarity(left, right):
     if not left or not right:
         return 0.0
     return (0.55 * SequenceMatcher(None, left, right).ratio()) + (0.45 * token_f1(left, right))
+
+
+def is_safe_fallback_match(expected, candidate):
+    expected_identity = extract_track_identity({}, expected)
+    candidate_identity = extract_track_identity(candidate)
+    if not expected_identity["title"] or not candidate_identity["title"]:
+        return False
+    if expected_identity["version"] != candidate_identity["version"]:
+        return False
+    if text_similarity(expected_identity["title"], candidate_identity["title"]) < 0.82:
+        return False
+    if expected_identity["artist"]:
+        return text_similarity(
+            primary_artist(expected_identity["artist"]),
+            primary_artist(candidate_identity["artist"]),
+        ) >= 0.72
+    return True
 
 
 def primary_artist(value):
@@ -473,6 +495,42 @@ def output_template(output_dir):
     return os.path.join(output_dir, "%(title)s [%(id)s].%(ext)s")
 
 
+def build_ydl_options(output_dir):
+    def reject_long_media(info, *, incomplete=False):
+        duration = info.get("duration")
+        if duration and duration > MAX_DURATION_SECONDS:
+            return f"Durasi media melebihi batas {MAX_DURATION_SECONDS} detik"
+        return None
+
+    options = {
+        "format": "bestaudio/best",
+        "match_filter": reject_long_media,
+        "max_filesize": MAX_SOURCE_BYTES,
+        "socket_timeout": 30,
+        "noplaylist": True,
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "320",
+            },
+            {"key": "FFmpegMetadata"},
+        ],
+        "writethumbnail": True,
+        "outtmpl": output_template(output_dir),
+        "quiet": True,
+        "noprogress": True,
+    }
+    if DOWNLOAD_PROXY:
+        options["proxy"] = DOWNLOAD_PROXY
+    if DENO_BIN:
+        options["js_runtimes"] = {"deno": {"path": DENO_BIN}}
+    if ALLOW_REMOTE_COMPONENTS:
+        options["remote_components"] = ["ejs:github"]
+    return options
+
+
 def find_generated_mp3(output_dir, video_id=None):
     files = [
         os.path.join(output_dir, name)
@@ -491,25 +549,7 @@ def find_generated_mp3(output_dir, video_id=None):
 
 def download_music(url, output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    ydl_opts = {
-        "format": "ba/b/18",
-        "proxy": "socks5://127.0.0.1:40000",
-        "remote_components": ["ejs:github"],
-        "js_runtimes": {"deno": {"path": "/usr/local/bin/deno"}},
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",
-            },
-            {"key": "FFmpegMetadata"},
-        ],
-        "writethumbnail": True,
-        "outtmpl": output_template(output_dir),
-        "quiet": False,
-        "noprogress": False,
-    }
+    ydl_opts = build_ydl_options(output_dir)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as downloader:
@@ -531,16 +571,23 @@ def download_music(url, output_dir):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as downloader:
-            search_info = downloader.extract_info(f"ytsearch1:{search_query}", download=True)
+            search_info = downloader.extract_info(f"ytsearch1:{search_query}", download=False)
             entries = search_info.get("entries", []) if search_info else []
             for entry in entries:
                 if not entry:
                     continue
-                mp3_filename = find_generated_mp3(output_dir, entry.get("id"))
+                if not is_safe_fallback_match(oembed, entry):
+                    log("Hasil fallback ditolak karena identitas lagu tidak cocok.")
+                    continue
+                fallback_url = entry.get("webpage_url") or entry.get("url")
+                if not fallback_url:
+                    continue
+                downloaded_entry = downloader.extract_info(fallback_url, download=True)
+                mp3_filename = find_generated_mp3(output_dir, downloaded_entry.get("id"))
                 if mp3_filename and os.path.exists(mp3_filename):
                     finalize_download(
                         mp3_filename,
-                        entry,
+                        downloaded_entry,
                         oembed,
                         oembed.get("thumbnail"),
                     )

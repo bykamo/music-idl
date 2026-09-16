@@ -9,7 +9,7 @@
 ![PM2](https://img.shields.io/badge/PM2-2B826B?style=flat&logo=pm2&logoColor=white)
 ![Caddy](https://img.shields.io/badge/Caddy-00A2C9?style=flat&logo=caddy&logoColor=white)
 
-Aplikasi Web modern berkecepatan tinggi untuk mencari dan mengunduh musik dari YouTube Music dalam format MP3 berkualitas tinggi (320kbps) lengkap dengan metadata otomatis (Judul, Artis, dan Cover Art 1:1) tanpa iklan atau batasan.
+Aplikasi web untuk mencari dan mengunduh audio dari video YouTube sebagai MP3 hingga 320 kbps, lengkap dengan metadata otomatis (judul, artis, dan cover art 1:1). Kualitas hasil tetap bergantung pada kualitas audio sumber.
 
 ---
 
@@ -17,7 +17,7 @@ Aplikasi Web modern berkecepatan tinggi untuk mencari dan mengunduh musik dari Y
 
 * `/client`: Frontend (React + Vite + TypeScript + Tailwind CSS)
 * `/server`: Backend Server (Node.js + Express)
-* `/server/engine`: Engine Pengunduh Musik (Python `yt-dlp` & `ffmpeg` via SOCKS5 Proxy)
+* `/server/engine`: engine pengunduh musik (Python `yt-dlp` dan `ffmpeg`; SOCKS5 bersifat opsional)
 
 ---
 
@@ -26,9 +26,10 @@ Aplikasi Web modern berkecepatan tinggi untuk mencari dan mengunduh musik dari Y
 Sebelum menjalankan aplikasi, pastikan sistem kamu sudah menginstal:
 
 1. **Node.js** (v18 atau lebih baru) & **npm**
-2. **Python 3** (v3.8 atau lebih baru) dengan dependensi dari `server/engine/requirements.txt`
+2. **Python 3.10+** dengan dependensi dari `server/engine/requirements.txt`
 3. **FFmpeg** (untuk konversi format ke MP3)
-4. **Cloudflare WARP** (untuk bypass limitasi regional/block IP YouTube)
+4. **Deno** bila extractor YouTube membutuhkannya
+5. **Cloudflare WARP/SOCKS5** hanya bila koneksi server memang memerlukannya
 
 ---
 
@@ -38,6 +39,9 @@ Sebelum menjalankan aplikasi, pastikan sistem kamu sudah menginstal:
 ```bash
 cd server
 npm install
+python3 -m venv .venv
+.venv/bin/pip install -r engine/requirements.txt
+cp .env.example .env
 
 # Jalankan server backend (Port: 5200)
 npm run dev
@@ -70,6 +74,9 @@ Output build akan otomatis diletakkan di `/server/dist` dan di-serve langsung ol
 ```bash
 cd server
 npm install --omit=dev
+python3 -m venv .venv
+.venv/bin/pip install -r engine/requirements.txt
+cp .env.example .env
 
 # Jalankan backend
 pm2 start index.js --name "music-idl"
@@ -94,8 +101,26 @@ sudo systemctl reload caddy
 
 ## ⚙️ Konfigurasi Environment (`.env`)
 
-Buat file `.env` di folder `server/`:
+Buat file `.env` di folder `server/` dari contoh yang tersedia. Konfigurasi penting:
 
 ```env
+NODE_ENV=production
 PORT=5200
+SITE_URL=https://musicidl.web.id
+PYTHON_BIN=.venv/bin/python
+YT_DLP_BIN=.venv/bin/yt-dlp
+DENO_BIN=deno
+DOWNLOAD_PROXY=
+ALLOW_REMOTE_COMPONENTS=false
+ENGINE_TIMEOUT_MS=600000
+MAX_ACTIVE_DOWNLOADS=2
+MAX_QUEUED_DOWNLOADS=8
+MAX_DURATION_SECONDS=900
+MAX_SOURCE_BYTES=104857600
 ```
+
+`DOWNLOAD_PROXY` boleh dikosongkan. Jangan mengaktifkan `ALLOW_REMOTE_COMPONENTS` kecuali deployment memang memerlukan komponen yt-dlp dari GitHub dan risikonya sudah dipahami.
+
+## Batas keamanan
+
+Backend hanya menerima URL HTTPS dari hostname YouTube yang didukung. Satu IP hanya boleh memiliki satu job aktif/menunggu; jumlah job global, antrean, durasi media, ukuran sumber, dan waktu proses dibatasi melalui `.env`. Direktori job lama dibersihkan otomatis saat server mulai.

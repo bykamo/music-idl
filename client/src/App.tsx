@@ -7,6 +7,7 @@ import Loader from '@/components/ui/loader';
 import { SearchSkeleton } from '@/components/ui/search-skeleton';
 import { AnimatedThemeToggle } from '@/components/ui/theme-toggle';
 import { LimitDialog } from '@/components/ui/limit-dialog';
+import { extractYouTubeVideoId, safeInternalDownloadUrl } from '@/lib/youtube';
 
 interface Thumbnail {
   url: string;
@@ -27,7 +28,13 @@ interface SearchResult {
     channel?: string;
     title?: string;
     download_url?: string;
-  } | any;
+    bitrate?: string;
+    filesize?: number;
+    duration_sec?: number;
+    view_count?: number;
+    like_count?: number;
+    upload_date?: string;
+  };
 }
 
 interface ExternalInfo {
@@ -48,14 +55,26 @@ interface ExternalInfo {
 
 const API_BASE = '/api';
 
+function getApiStatus(error: unknown) {
+  return axios.isAxiosError(error) ? error.response?.status : undefined;
+}
+
+function getApiMessage(error: unknown, fallback: string) {
+  if (!axios.isAxiosError<{ message?: string }>(error)) return fallback;
+  return error.response?.data?.message || fallback;
+}
+
+function getDownloadUrlFromApiResponse(data: unknown) {
+  if (!data || typeof data !== 'object') return null;
+  return safeInternalDownloadUrl((data as { download_url?: unknown }).download_url);
+}
+
 function App() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searchProgress, setSearchProgress] = useState<number | null>(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [detailedInfo, setDetailedInfo] = useState<Record<string, ExternalInfo>>({});
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isLimitOpen, setIsLimitOpen] = useState(false);
@@ -90,17 +109,6 @@ function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const extractVideoId = (url: string) => {
-    const regExp = /^.*(?:(?:youtu\.be\/|v\/|vi\/|u\/\w\/|embed\/|shorts\/)|(?:(?:watch)?\?v(?:i)?=|\&v(?:i)?=))([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[1].length === 11) ? match[1] : null;
-  };
-
-  const getDownloadUrlFromApiResponse = (data: any) => {
-    if (!data || typeof data !== 'object') return null;
-    return data.download_url || data.url || data.result?.download_url || data.result?.url || data.data?.download_url || data.data?.url;
-  };
-
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) {
@@ -110,22 +118,21 @@ function App() {
     }
 
     setLoading(true);
-    setSearchProgress(0);
     setResults([]);
     setDownloadSuccess(false);
 
-    const progressInterval = setInterval(() => {
-      setSearchProgress((prev) => {
-        if (prev === null) return 0;
-        if (prev >= 99) return 99;
-        if (prev >= 92) return prev + 1;
-        return prev + 8;
-      });
-    }, 600);
-
     try {
       // YouTube Flow
-      const extractedId = extractVideoId(query);
+      const extractedId = extractYouTubeVideoId(query.trim());
+      if (/^https?:\/\//i.test(query.trim()) && !extractedId) {
+        setErrorDialog({
+          isOpen: true,
+          title: 'Link Tidak Didukung',
+          message: 'Saat ini hanya link video YouTube HTTPS yang didukung.',
+          isLimit: false
+        });
+        return;
+      }
       if (extractedId) {
         const normalizedUrl = `https://www.youtube.com/watch?v=${extractedId}`;
         setResults([{
@@ -145,7 +152,7 @@ function App() {
               setDetailedInfo(prev => ({ ...prev, [extractedId]: response.data.externalData }));
             }
           } else { throw new Error('No Data'); }
-        } catch (err) {
+        } catch {
           try {
             const fallback = await axios.get(`${API_BASE}/fallback-download?videoId=${extractedId}`);
             if (fallback.data && fallback.data.status) {
@@ -161,7 +168,7 @@ function App() {
               setResults([resObj]);
               setDetailedInfo(prev => ({ ...prev, [extractedId]: data }));
             } else { throw new Error('No fallback data'); }
-          } catch (e) {
+          } catch {
             setErrorDialog({
               isOpen: true,
               title: 'Gagal',
@@ -177,12 +184,13 @@ function App() {
         setResults(response.data);
       }
     } catch (err) {
-      console.error('Action failed', err);
-    } finally {
-      clearInterval(progressInterval);
-      setSearchProgress(null);
-      setLoading(false);
-    }
+      setErrorDialog({
+        isOpen: true,
+        title: 'Pencarian Gagal',
+        message: getApiMessage(err, 'Pencarian tidak dapat diproses. Silakan coba lagi.'),
+        isLimit: getApiStatus(err) === 429
+      });
+    } finally { setLoading(false); }
   };
 
   const handlePaste = async () => {
@@ -221,67 +229,28 @@ function App() {
     }
   };
 
-  const triggerDownload = async (url: string, title: string, videoId: string, metadata?: { artist?: string; image?: string; album?: string }) => {
-    setDownloading(videoId);
-    setDownloadProgress(0);
-
-    const params = new URLSearchParams({
-      url,
-      filename: `${title}.mp3`,
-      title
-    });
-
-    if (metadata?.artist) params.append('artist', metadata.artist);
-    if (metadata?.image) params.append('image', metadata.image);
-    if (metadata?.album) params.append('album', metadata.album);
-
-    const proxyUrl = `${API_BASE}/proxy-download?${params.toString()}`;
-
-    try {
-      const response = await axios({
-        url: proxyUrl,
-        method: 'GET',
-        responseType: 'blob',
-        onDownloadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percentCompleted = Math.min(100, Math.round((progressEvent.loaded * 100) / progressEvent.total));
-            setDownloadProgress(percentCompleted);
-          } else {
-            // Fallback estimation
-            setDownloadProgress(Math.min(99, Math.round(progressEvent.loaded / 150000)));
-          }
-        }
+  const triggerDownload = (url: string, title: string, videoId: string) => {
+    const downloadUrl = safeInternalDownloadUrl(url);
+    if (!downloadUrl) {
+      setErrorDialog({
+        isOpen: true,
+        title: 'Link Unduhan Tidak Valid',
+        message: 'Server mengirim link unduhan yang tidak dapat dipercaya.',
+        isLimit: false
       });
-
-      const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.setAttribute('download', `${title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
-
-      setDownloading(null);
-      setDownloadProgress(null);
-      setDownloadSuccess(true);
-    } catch (err) {
-      console.error('Download progress failed, trying fallback direct click', err);
-      // Fallback
-      const link = document.createElement('a');
-      link.href = proxyUrl;
-      link.setAttribute('download', `${title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3`);
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-
-      setTimeout(() => {
-        if (document.body.contains(link)) document.body.removeChild(link);
-        setDownloading(null);
-        setDownloadProgress(null);
-        setDownloadSuccess(true);
-      }, 2000);
+      return;
     }
+
+    setDownloading(videoId);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.setAttribute('download', `${title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3`);
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setDownloading(null);
+    setDownloadSuccess(true);
   };
 
   const downloadMusic = async (videoId: string, title: string) => {
@@ -289,75 +258,51 @@ function App() {
     try {
       const ext = detailedInfo[videoId];
       if (ext?.download_url) {
-        await triggerDownload(ext.download_url, ext.title || title, videoId, {
-          artist: ext.channel || 'Unknown Artist',
-          image: ext.thumbnail,
-          album: ext.album
-        });
-        return;
-      }
-
-      if (videoId.startsWith('am-')) {
-        setErrorDialog({
-          isOpen: true,
-          title: 'Link Kadaluarsa',
-          message: 'Gunakan link Apple Music yang baru.',
-          isLimit: false
-        });
+        triggerDownload(ext.download_url, ext.title || title, videoId);
         return;
       }
 
       const response = await axios.get(`${API_BASE}/download?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`);
       const downloadUrl = getDownloadUrlFromApiResponse(response.data);
       if (downloadUrl) {
-        await triggerDownload(downloadUrl, response.data.title || title, videoId, {
-          artist: response.data.channel || 'Unknown Artist',
-          image: response.data.thumbnail,
-          album: response.data.album || 'YouTube Download'
-        });
+        triggerDownload(downloadUrl, response.data.title || title, videoId);
       }
-    } catch (err: any) {
-      if (err.response?.status === 429) {
+    } catch (err: unknown) {
+      if (getApiStatus(err) === 429) {
         setIsLimitOpen(true);
         return;
       }
-      if (err.response?.status === 403 && err.response?.data?.message) {
+      if (getApiStatus(err) === 403) {
         setErrorDialog({
           isOpen: true,
           title: 'Server Limit',
-          message: err.response.data.message,
+          message: getApiMessage(err, 'Server menolak permintaan unduhan.'),
           isLimit: false
         });
         return;
       }
 
-      if (!videoId.startsWith('am-')) {
-        try {
-          const fb = await axios.get(`${API_BASE}/fallback-download?videoId=${videoId}`);
-          const fUrl = getDownloadUrlFromApiResponse(fb.data);
-          if (fUrl) {
-            await triggerDownload(fUrl, title, videoId, {
-              artist: fb.data.channel,
-              image: fb.data.thumbnail,
-              album: 'YouTube Download'
-            });
-          } else if (fb.data?.message && fb.data.message.toLowerCase().includes('limit')) {
-            setIsLimitOpen(true);
-          }
-        } catch (e: any) {
-          setErrorDialog({
-            isOpen: true,
-            title: 'Gagal',
-            message: e.response?.data?.message || 'Gagal mendownload lagu. Silakan coba beberapa saat lagi.',
-            isLimit: false
-          });
+      try {
+        const fb = await axios.get(`${API_BASE}/fallback-download?videoId=${videoId}`);
+        const fallbackUrl = getDownloadUrlFromApiResponse(fb.data);
+        if (fallbackUrl) {
+          triggerDownload(fallbackUrl, title, videoId);
+        } else {
+          throw new Error('Server tidak mengirim link unduhan yang valid.', { cause: err });
         }
+      } catch (fallbackError: unknown) {
+        setErrorDialog({
+          isOpen: true,
+          title: 'Gagal',
+          message: getApiMessage(fallbackError, 'Gagal mengunduh lagu. Silakan coba beberapa saat lagi.'),
+          isLimit: false
+        });
       }
     } finally { setDownloading(null); }
   };
 
   const fetchExternalInfo = async (videoId: string) => {
-    if (detailedInfo[videoId] || videoId.startsWith('am-')) return;
+    if (detailedInfo[videoId]) return;
     try {
       const response = await axios.get(`${API_BASE}/external-info?videoId=${videoId}`);
       const data = response.data || {};
@@ -500,26 +445,12 @@ function App() {
                 disabled={loading}
                 className={`w-fit relative px-8 py-3 rounded-full font-bold transition-all disabled:opacity-60 flex items-center justify-center gap-2 shadow-lg text-base focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 overflow-hidden ${loading ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]'}`}
               >
-                {loading && searchProgress !== null && (
-                  <div
-                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out"
-                    style={{ width: `${searchProgress}%` }}
-                  />
-                )}
-
                 <span className="relative z-10 flex items-center gap-2">
                   {loading ? (
-                    searchProgress !== null ? (
-                      <>
-                        <Loader2 className="animate-spin" size={20} />
-                        {`Memproses (${searchProgress}%)`}
-                      </>
-                    ) : (
-                      <>
-                        <Loader2 className="animate-spin" size={20} />
-                        Memproses...
-                      </>
-                    )
+                    <>
+                      <Loader2 className="animate-spin" size={20} />
+                      Memproses...
+                    </>
                   ) : (
                     <>
                       <Download size={20} />
@@ -574,7 +505,7 @@ function App() {
                         <div className="flex flex-col gap-1 w-full">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="bg-primary px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit text-primary-foreground">
-                              {ext ? ext.bitrate : '320kbps'}
+                              {ext ? ext.bitrate : 'hingga 320kbps'}
                             </span>
                             <span className="bg-black/70 border border-white/10 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white">
                               {platform}
@@ -606,7 +537,7 @@ function App() {
                             {ext.like_count > 0 && <p className="text-muted-foreground flex items-center justify-end gap-1">{formatViews(ext.like_count)} <ThumbsUp size={12} /></p>}
                           </div>
                         ) : (
-                          !item.videoId.startsWith('am-') && <button onClick={() => fetchExternalInfo(item.videoId)} className="text-[10px] text-primary/70 hover:text-primary flex items-center justify-end gap-1 transition-colors"><Info size={10} /> Detail</button>
+                          <button onClick={() => fetchExternalInfo(item.videoId)} className="text-[10px] text-primary/70 hover:text-primary flex items-center justify-end gap-1 transition-colors"><Info size={10} /> Detail</button>
                         )}
                       </div>
                       {ext && ext.filesize > 0 && (
@@ -621,26 +552,12 @@ function App() {
                           disabled={!!downloading}
                           className={`w-full relative px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 overflow-hidden ${downloading === item.videoId ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]'}`}
                         >
-                          {downloading === item.videoId && downloadProgress !== null && (
-                            <div
-                              className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600/40 to-red-500/60 transition-all duration-300 ease-out"
-                              style={{ width: `${downloadProgress}%` }}
-                            />
-                          )}
-
                           <span className="relative z-10 flex items-center gap-2">
                             {downloading === item.videoId ? (
-                              downloadProgress !== null && downloadProgress > 0 ? (
-                                <>
-                                  <Loader2 className="animate-spin" size={16} />
-                                  {`Mengunduh (${downloadProgress}%)`}
-                                </>
-                              ) : (
-                                <>
-                                  <Loader2 className="animate-spin" size={16} />
-                                  Sedang mengunduh di server...
-                                </>
-                              )
+                              <>
+                                <Loader2 className="animate-spin" size={16} />
+                                Menyiapkan unduhan...
+                              </>
                             ) : (
                               <>
                                 <Download size={16} />
