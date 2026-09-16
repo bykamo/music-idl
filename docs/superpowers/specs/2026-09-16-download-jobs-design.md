@@ -2,7 +2,7 @@
 
 ## Goal
 
-Mengubah unduhan MP3 dari satu request HTTP panjang menjadi job asinkron yang memiliki progres nyata, pembatalan, retry, pengambilan file terpisah, health check, dan integration test tanpa menambah infrastruktur eksternal.
+Mengubah unduhan audio dari satu request HTTP panjang menjadi job asinkron yang memiliki progres nyata, pembatalan, retry, pilihan kualitas MP3 atau format asli, pengambilan file terpisah, health check, dan integration test tanpa menambah infrastruktur eksternal.
 
 ## Scope
 
@@ -15,10 +15,13 @@ Paket ini mencakup:
 - retry untuk job gagal atau dibatalkan;
 - endpoint file yang hanya tersedia setelah job selesai;
 - health/readiness check untuk dependency lokal dan kapasitas antrean;
+- pilihan MP3 128, 192, atau 320 kbps dengan default 192 kbps;
+- Fast Mode yang menyimpan stream audio asli M4A/WebM tanpa encoding ulang;
+- ukuran, format, dan bitrate hasil yang diambil dari file/job sebenarnya;
 - UI progres, cancel, retry, dan pengambilan hasil;
 - integration test HTTP dengan engine fixture lokal tanpa akses YouTube.
 
-Paket ini tidak mencakup Redis, BullMQ, database, persistensi melewati restart, playlist, akun pengguna, atau pemulihan job setelah browser dimuat ulang.
+Paket ini tidak mencakup Redis, BullMQ, database, persistensi melewati restart, playlist, akun pengguna, pemulihan job setelah browser dimuat ulang, atau output FLAC. FLAC tidak ditawarkan karena sumber YouTube bukan lossless.
 
 ## Architecture
 
@@ -34,7 +37,7 @@ Status job yang dapat dilihat client:
 
 - `queued`: menunggu slot;
 - `running`: engine sedang berjalan;
-- `completed`: MP3 siap diambil;
+- `completed`: file audio siap diambil;
 - `failed`: engine gagal atau timeout;
 - `cancelled`: dibatalkan pengguna.
 
@@ -58,17 +61,23 @@ Job terminal disimpan sampai `JOB_TTL_MS`. File job yang selesai juga dibersihka
 Body:
 
 ```json
-{ "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "format": "mp3",
+  "bitrate": 192
+}
 ```
 
-Server menormalisasi URL dengan policy YouTube yang sudah ada, menerapkan rate limit unduhan, lalu mengembalikan HTTP `202`:
+Server menormalisasi URL dengan policy YouTube yang sudah ada, menerapkan rate limit unduhan, dan memvalidasi format. `format` hanya menerima `mp3` atau `original`; `bitrate` hanya menerima `128`, `192`, atau `320` dan wajib untuk MP3. Fast Mode memakai `format: "original"` dan mengabaikan bitrate. Server lalu mengembalikan HTTP `202`:
 
 ```json
 {
   "id": "opaque-uuid",
   "status": "queued",
   "stage": "queued",
-  "progress": 0
+  "progress": 0,
+  "outputFormat": "mp3",
+  "bitrate": 192
 }
 ```
 
@@ -86,6 +95,9 @@ Mengembalikan snapshot publik job. Respons tidak menyertakan URL sumber, path fi
   "progress": 47,
   "message": "Mengunduh audio...",
   "fileName": null,
+  "fileSize": null,
+  "outputFormat": "mp3",
+  "bitrate": 192,
   "error": null
 }
 ```
@@ -102,7 +114,7 @@ Hanya menerima job `failed` atau `cancelled`. Server membuat job baru dengan URL
 
 ### `GET /api/jobs/:id/file`
 
-Hanya menerima job `completed`. Server memvalidasi ulang bahwa path berada di direktori job dan berekstensi `.mp3`, lalu memakai `res.download`. Status lain mengembalikan `409 JOB_NOT_READY`. Setelah callback transfer, direktori dan record job dibersihkan.
+Hanya menerima job `completed`. Server memvalidasi ulang bahwa path berada di direktori job dan berekstensi `.mp3`, `.m4a`, `.webm`, atau `.opus`, lalu memakai `res.download` dengan MIME yang sesuai. Status lain mengembalikan `409 JOB_NOT_READY`. Setelah callback transfer, direktori dan record job dibersihkan.
 
 ### `GET /api/health`
 
@@ -120,6 +132,8 @@ Deno diperiksa hanya jika `DENO_BIN` tidak kosong. Pemeriksaan binary memakai co
 
 ## Engine Progress Protocol
 
+Engine menerima argumen `--format mp3 --bitrate 192` atau `--format original`. Mode MP3 memakai postprocessor FFmpeg dan menanam artwork/metadata seperti alur yang ada. Mode original memilih stream audio terbaik berformat M4A atau WebM/Opus, tidak menjalankan ekstraksi MP3, dan tidak menanam artwork agar file tidak di-encode atau di-remux ulang.
+
 Engine menulis event berikut ke stderr:
 
 ```text
@@ -129,24 +143,25 @@ MUSIC_IDL_EVENT {"stage":"encoding","progress":88}
 MUSIC_IDL_EVENT {"stage":"tagging","progress":94}
 ```
 
-`progress_hooks` yt-dlp menghasilkan event download. `postprocessor_hooks` menghasilkan event encoding. Fungsi finalisasi metadata menghasilkan event tagging. Event invalid diabaikan oleh Node; log stderr biasa tetap hanya dicatat di server. Node membatasi buffer stdout/stderr dan membatasi progres ke bilangan bulat `0..100`.
+`progress_hooks` yt-dlp menghasilkan event download. `postprocessor_hooks` menghasilkan event encoding khusus MP3. Fungsi finalisasi metadata menghasilkan event tagging khusus MP3. Fast Mode bergerak dari download langsung ke completed. Event invalid diabaikan oleh Node; log stderr biasa tetap hanya dicatat di server. Node membatasi buffer stdout/stderr dan membatasi progres ke bilangan bulat `0..100`.
 
 ## Client Experience
 
-Tombol `Unduh MP3` membuat job dan berubah menjadi panel progres pada kartu lagu. Panel menampilkan stage manusiawi, progress bar, persentase, dan tombol `Batalkan`. Saat gagal atau dibatalkan, panel menampilkan pesan aman dan tombol `Coba Lagi`. Saat selesai, browser mengambil `/api/jobs/:id/file`; UI menandai berhasil setelah navigasi download dipicu.
+Kartu lagu menyediakan pemilih `MP3` atau `Fast Mode`. MP3 menyediakan pilihan 128, 192, dan 320 kbps; default-nya 192 kbps. Pilihan terakhir disimpan di `localStorage`. Tombol unduh membuat job dan berubah menjadi panel progres pada kartu lagu. Panel menampilkan stage manusiawi, progress bar, persentase, dan tombol `Batalkan`. Saat gagal atau dibatalkan, panel menampilkan pesan aman dan tombol `Coba Lagi`. Saat selesai, client menampilkan nama, ukuran, dan format aktual lalu browser mengambil `/api/jobs/:id/file`; UI menandai berhasil setelah navigasi download dipicu.
 
 Hanya satu job client yang dikelola UI pada satu waktu, sesuai aturan server per IP. Timer polling dan request yang masih berjalan dibersihkan ketika komponen dibongkar atau job diganti.
 
 ## Error Handling and Security
 
 - Semua URL melewati `normalizeYouTubeUrl` sebelum disimpan atau dijalankan.
+- Format dan bitrate divalidasi dengan allowlist di server; nilai client tidak pernah diteruskan mentah menjadi argumen command.
 - Job ID divalidasi sebagai UUID sebelum lookup.
 - Record publik tidak membocorkan URL, IP, path, atau output proses.
 - Create dan retry memakai download rate limiter; polling, cancel, file, dan health tetap dilindungi general API limiter.
 - Cancel bersifat idempotent pada child process tetapi endpoint tetap melaporkan conflict untuk job terminal.
 - Timeout engine menghasilkan `failed` dengan kode `DOWNLOAD_TIMEOUT`.
 - Abort pengguna menghasilkan `cancelled`, bukan `failed`.
-- File hanya dapat dikirim dari direktori job yang sesuai dan harus berekstensi `.mp3`.
+- File hanya dapat dikirim dari direktori job yang sesuai dan harus berekstensi `.mp3`, `.m4a`, `.webm`, atau `.opus`.
 - Shutdown server menghentikan job aktif dan membersihkan child process.
 
 ## Compatibility
@@ -164,11 +179,13 @@ Client baru hanya memakai job API. Endpoint metadata tetap dipertahankan. Endpoi
 - retry hanya dari status terminal yang diizinkan;
 - expiry/cleanup;
 - parsing event engine dan penolakan path hasil tidak aman;
-- helper client untuk status/stage dan URL file internal.
+- helper client untuk status/stage dan URL file internal;
+- validasi kombinasi format/bitrate dan persistensi preferensi client;
+- opsi yt-dlp untuk setiap kualitas MP3 serta Fast Mode tanpa postprocessor audio.
 
 ### HTTP integration tests
 
-Server test dijalankan sebagai child process dengan engine fixture Node lokal. Fixture dapat mengirim progres, selesai dengan MP3 dummy, gagal, atau menunggu sampai dibatalkan. Test membuktikan create → poll → completed → file, cancel, retry, validasi URL, dan health response tanpa jaringan eksternal.
+Server test dijalankan sebagai child process dengan engine fixture Node lokal. Fixture dapat mengirim progres, selesai dengan MP3/M4A dummy, gagal, atau menunggu sampai dibatalkan. Test membuktikan create → poll → completed → file, cancel, retry, validasi URL/format/bitrate, metadata ukuran hasil, dan health response tanpa jaringan eksternal.
 
 ### Static and regression verification
 
