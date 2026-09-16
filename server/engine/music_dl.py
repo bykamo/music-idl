@@ -19,6 +19,7 @@ ITUNES_COUNTRY = os.environ.get("ITUNES_COUNTRY", "ID")
 USER_AGENT = "Music-IDL/1.0"
 DOWNLOAD_PROXY = os.environ.get("DOWNLOAD_PROXY", "").strip()
 DENO_BIN = os.environ.get("DENO_BIN", "deno").strip()
+FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg").strip()
 ALLOW_REMOTE_COMPONENTS = os.environ.get("ALLOW_REMOTE_COMPONENTS", "false").lower() == "true"
 MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "900"))
 MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
@@ -402,7 +403,7 @@ def embed_metadata(mp3_path, artwork_path, identity, apple_match=None):
     album = apple_result.get("collectionName") or identity.get("album")
     temp_mp3 = f"{mp3_path}.tagged.mp3"
     command = [
-        "ffmpeg", "-y",
+        FFMPEG_BIN, "-y",
         "-i", mp3_path,
         "-i", artwork_path,
         "-map", "0:a:0",
@@ -544,6 +545,8 @@ def build_ydl_options(output_dir, output_format="mp3", bitrate=192):
         "noprogress": True,
         "progress_hooks": [download_progress_hook],
     }
+    if FFMPEG_BIN:
+        options["ffmpeg_location"] = FFMPEG_BIN
     if output_format == "mp3":
         options["postprocessors"] = [
             {

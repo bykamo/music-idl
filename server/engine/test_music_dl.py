@@ -68,6 +68,14 @@ class DownloadOptionsTest(unittest.TestCase):
         self.assertNotIn("postprocessor_hooks", options)
         self.assertFalse(options["writethumbnail"])
 
+    def test_ffmpeg_binary_location_is_forwarded_to_yt_dlp(self):
+        engine = load_engine_module()
+        engine.FFMPEG_BIN = "/opt/music-idl/bin/ffmpeg"
+
+        options = engine.build_ydl_options("/tmp/music-idl-test")
+
+        self.assertEqual(options["ffmpeg_location"], "/opt/music-idl/bin/ffmpeg")
+
     def test_fallback_match_rejects_an_unrelated_recording(self):
         engine = load_engine_module()
         expected = {

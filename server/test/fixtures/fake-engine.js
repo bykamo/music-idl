@@ -11,6 +11,7 @@ fs.mkdirSync(outputDir, { recursive: true });
 
 if (videoId === 'bbbbbbbbbbb') {
     process.stderr.write('MUSIC_IDL_EVENT {"stage":"downloading","progress":10}\n');
+    process.on('SIGTERM', () => setTimeout(() => process.exit(0), 250));
     setInterval(() => {}, 1000);
 } else if (videoId === 'ccccccccccc') {
     process.stderr.write('fixture failure\n');

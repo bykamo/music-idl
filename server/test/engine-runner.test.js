@@ -75,11 +75,19 @@ test('rejects failed and aborted engine processes and removes partial directorie
     );
 
     const controller = new AbortController();
+    let markStarted;
+    const started = new Promise(resolve => {
+        markStarted = resolve;
+    });
     const blocked = run({
         url: youtubeUrl('bbbbbbbbbbb'),
         options: { format: 'mp3', bitrate: 192 }
-    }, controller.signal, () => {});
-    setTimeout(() => controller.abort(), 30);
-    await assert.rejects(blocked, error => error.name === 'AbortError');
+    }, controller.signal, () => markStarted());
+    const rejected = assert.rejects(blocked, error => error.name === 'AbortError');
+    await started;
+    controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.deepEqual(fs.readdirSync(outputDir), []);
+    await rejected;
     assert.deepEqual(fs.readdirSync(outputDir), []);
 });

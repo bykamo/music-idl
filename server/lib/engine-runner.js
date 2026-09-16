@@ -81,6 +81,7 @@ function createEngineRunner({ binary, scriptPath, cwd, env, timeoutMs, outputDir
             const onAbort = () => {
                 aborted = true;
                 child.kill('SIGTERM');
+                removeJobDir();
             };
             const timer = setTimeout(() => {
                 timedOut = true;

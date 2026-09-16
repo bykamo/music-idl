@@ -35,7 +35,7 @@
 - Produces: Python CLI `music_dl.py URL OUTPUT_DIR --format mp3|original [--bitrate 128|192|320]`.
 - Produces: Python stderr events prefixed by `MUSIC_IDL_EVENT ` and stdout final JSON containing `file_path`, `format`, `bitrate`, and `file_size`.
 
-- [ ] **Step 1: Write failing Node policy tests**
+- [x] **Step 1: Write failing Node policy tests**
 
 ```js
 test('normalizes supported download options', () => {
@@ -53,12 +53,12 @@ test('rejects unsupported format and bitrate', () => {
 });
 ```
 
-- [ ] **Step 2: Run policy tests and confirm RED**
+- [x] **Step 2: Run policy tests and confirm RED**
 
 Run: `npm --prefix server test -- test/download-options.test.js`
 Expected: FAIL because `server/lib/download-options.js` does not exist.
 
-- [ ] **Step 3: Implement the allowlist policy**
+- [x] **Step 3: Implement the allowlist policy**
 
 ```js
 const MP3_BITRATES = new Set([128, 192, 320]);
@@ -75,7 +75,7 @@ function normalizeDownloadOptions(value = {}) {
 }
 ```
 
-- [ ] **Step 4: Write failing Python engine-option tests**
+- [x] **Step 4: Write failing Python engine-option tests**
 
 ```python
 def test_original_mode_has_no_audio_postprocessor(self):
@@ -88,22 +88,22 @@ def test_mp3_mode_uses_requested_bitrate(self):
     self.assertEqual(options['postprocessors'][0]['preferredquality'], '128')
 ```
 
-- [ ] **Step 5: Run Python tests and confirm RED**
+- [x] **Step 5: Run Python tests and confirm RED**
 
 Run: `npm --prefix server run test:engine`
 Expected: FAIL because `build_ydl_options` does not accept format and bitrate.
 
-- [ ] **Step 6: Implement CLI parsing, structured hooks, and result metadata**
+- [x] **Step 6: Implement CLI parsing, structured hooks, and result metadata**
 
 Use `argparse` with exact choices, add `emit_event(stage, progress)`, add yt-dlp `progress_hooks` and MP3-only `postprocessor_hooks`, skip artwork/tagging for original mode, locate only `.m4a`, `.webm`, or `.opus` in original mode, and return `os.path.getsize(mp3_path)` as `file_size`.
 
-- [ ] **Step 7: Run focused tests and confirm GREEN**
+- [x] **Step 7: Run focused tests and confirm GREEN**
 
 Run: `npm --prefix server test -- test/download-options.test.js`
 Run: `npm --prefix server run test:engine`
 Expected: all focused tests PASS.
 
-- [ ] **Step 8: Commit Task 1**
+- [x] **Step 8: Commit Task 1**
 
 ```bash
 git add server/lib/download-options.js server/test/download-options.test.js server/engine/music_dl.py server/engine/test_music_dl.py
@@ -120,7 +120,7 @@ git commit -m "feat: add audio output modes"
 - Consumes: `normalizeDownloadOptions` output and an injected `runner(job, signal, onProgress)` function.
 - Produces: `create`, `getPublic`, `cancel`, `retry`, `consume`, `stats`, `cleanupExpired`, and `close` methods.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 ```js
 test('queues work, exposes monotonic progress, and completes', async () => {
@@ -141,16 +141,16 @@ test('queues work, exposes monotonic progress, and completes', async () => {
 });
 ```
 
-- [ ] **Step 2: Run manager tests and confirm RED**
+- [x] **Step 2: Run manager tests and confirm RED**
 
 Run: `npm --prefix server test -- test/download-job-manager.test.js`
 Expected: FAIL because the manager module does not exist.
 
-- [ ] **Step 3: Implement minimal queue and lifecycle state**
+- [x] **Step 3: Implement minimal queue and lifecycle state**
 
 Use `crypto.randomUUID()`, `Map`, an array queue, `AbortController`, fixed public messages, and terminal statuses. Remove queued cancellation immediately; abort running jobs; release client ownership on every terminal transition; copy URL/options internally on retry; never include them in `getPublic`.
 
-- [ ] **Step 4: Add failing cancel, retry, capacity, and TTL tests**
+- [x] **Step 4: Add failing cancel, retry, capacity, and TTL tests**
 
 ```js
 test('cancels a running job and permits retry', async () => {
@@ -163,12 +163,12 @@ test('cancels a running job and permits retry', async () => {
 });
 ```
 
-- [ ] **Step 5: Run tests, implement missing transitions, and confirm GREEN**
+- [x] **Step 5: Run tests, implement missing transitions, and confirm GREEN**
 
 Run: `npm --prefix server test -- test/download-job-manager.test.js`
 Expected: all manager tests PASS with no unhandled rejection.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```bash
 git add server/lib/download-job-manager.js server/test/download-job-manager.test.js
@@ -187,7 +187,7 @@ git commit -m "feat: add in-memory download jobs"
 - Produces: `createEngineRunner(config)` returning `run(job, signal, onProgress)`.
 - Produces: `parseEngineEvent(line) -> { stage, progress } | null`.
 
-- [ ] **Step 1: Write failing event parser and runner tests**
+- [x] **Step 1: Write failing event parser and runner tests**
 
 ```js
 test('parses only valid prefixed progress events', () => {
@@ -198,25 +198,25 @@ test('parses only valid prefixed progress events', () => {
 });
 ```
 
-- [ ] **Step 2: Run runner tests and confirm RED**
+- [x] **Step 2: Run runner tests and confirm RED**
 
 Run: `npm --prefix server test -- test/engine-runner.test.js`
 Expected: FAIL because the runner module does not exist.
 
-- [ ] **Step 3: Implement streaming spawn runner**
+- [x] **Step 3: Implement streaming spawn runner**
 
 Spawn the configured binary with an argument array only, split stderr by newline, cap stdout/stderr at 5 MiB, enforce timeout, map abort to an `AbortError`, parse the final stdout JSON, and validate the resolved output path with `allowedAudioPath(jobDir, filePath)` before returning it.
 
-- [ ] **Step 4: Implement deterministic fake engine modes**
+- [x] **Step 4: Implement deterministic fake engine modes**
 
 The fixture reads the video ID: `aaaaaaaaaaa` emits two progress events and an MP3 result; `bbbbbbbbbbb` waits until SIGTERM; `ccccccccccc` exits non-zero; `ddddddddddd` emits an M4A result. It writes only inside the provided output directory.
 
-- [ ] **Step 5: Run runner tests and confirm GREEN**
+- [x] **Step 5: Run runner tests and confirm GREEN**
 
 Run: `npm --prefix server test -- test/engine-runner.test.js`
 Expected: progress streams, MP3/M4A results validate, failure rejects, and abort kills the fixture.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 ```bash
 git add server/lib/engine-runner.js server/test/engine-runner.test.js server/test/fixtures/fake-engine.js
@@ -235,7 +235,7 @@ git commit -m "feat: stream download engine progress"
 - Consumes: output policy, job manager, and engine runner.
 - Produces: `POST /api/jobs`, `GET /api/jobs/:id`, `DELETE /api/jobs/:id`, `POST /api/jobs/:id/retry`, `GET /api/jobs/:id/file`, and `GET /api/health`.
 
-- [ ] **Step 1: Write failing HTTP integration test**
+- [x] **Step 1: Write failing HTTP integration test**
 
 ```js
 const created = await fetch(`${baseUrl}/api/jobs`, {
@@ -251,29 +251,29 @@ const file = await fetch(`${baseUrl}/api/jobs/${job.id}/file`);
 assert.equal(file.status, 200);
 ```
 
-- [ ] **Step 2: Run API test and confirm RED**
+- [x] **Step 2: Run API test and confirm RED**
 
 Run: `npm --prefix server test -- test/job-api.test.js`
 Expected: FAIL with HTTP 404 for `/api/jobs`.
 
-- [ ] **Step 3: Wire the job routes**
+- [x] **Step 3: Wire the job routes**
 
 Apply the existing download limiter to create/retry, validate UUID params, translate policy errors consistently, send `202/404/409/429/503` exactly as specified, and use `res.download` only after a completed job is consumed safely.
 
-- [ ] **Step 4: Add health test and implement cached dependency checks**
+- [x] **Step 4: Add health test and implement cached dependency checks**
 
 The test server sets `HEALTHCHECK_BINARIES=false` so the response deterministically asserts `status`, `outputDirectory`, `active`, `queued`, `maxActive`, and `maxQueued`. Production defaults to checking Python, yt-dlp, FFmpeg, and configured Deno with `execFile --version` and a five-second cache.
 
-- [ ] **Step 5: Add cancel, retry, validation, and information-leak assertions**
+- [x] **Step 5: Add cancel, retry, validation, and information-leak assertions**
 
 Assert that invalid format/bitrate return 400, a blocking fixture can be cancelled, a failed fixture can be retried, public JSON lacks `url`, `clientId`, `filePath`, and `stderr`, and unknown UUIDs return `JOB_NOT_FOUND`.
 
-- [ ] **Step 6: Run server suite and confirm GREEN**
+- [x] **Step 6: Run server suite and confirm GREEN**
 
 Run: `npm --prefix server test`
 Expected: all server tests PASS.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```bash
 git add server/index.js server/.env.example server/test/job-api.test.js server/test/http-security.test.js
@@ -293,7 +293,7 @@ git commit -m "feat: expose download job API"
 - Produces: `DownloadOptions`, `DownloadJob`, `readDownloadPreference`, `writeDownloadPreference`, `jobFileUrl`, and `jobStageLabel`.
 - Consumes: the HTTP job API from Task 4.
 
-- [ ] **Step 1: Write failing helper tests**
+- [x] **Step 1: Write failing helper tests**
 
 ```ts
 test('builds only safe internal job file URLs', () => {
@@ -307,31 +307,31 @@ test('normalizes stored preferences', () => {
 });
 ```
 
-- [ ] **Step 2: Run client tests and confirm RED**
+- [x] **Step 2: Run client tests and confirm RED**
 
 Run: `npm --prefix client test`
 Expected: FAIL because `download-jobs.ts` does not exist.
 
-- [ ] **Step 3: Implement helpers and migrate safe URL checks**
+- [x] **Step 3: Implement helpers and migrate safe URL checks**
 
 Use a strict UUID regex, fixed stage-label map, exact option unions, and localStorage key `music-idl-download-options-v1`. Remove client reliance on `/api/engine-download` URLs.
 
-- [ ] **Step 4: Replace direct download flow in App**
+- [x] **Step 4: Replace direct download flow in App**
 
 On click, POST `{ url, format, bitrate }`; poll every 1000 ms; show stage/progress; DELETE on cancel; POST retry on failed/cancelled; navigate a hidden anchor to the safe file URL on completed; clear intervals and ignore stale responses via a monotonically increasing request token.
 
-- [ ] **Step 5: Add the format and bitrate controls**
+- [x] **Step 5: Add the format and bitrate controls**
 
 Add accessible buttons for MP3/Fast Mode and 128/192/320; disable bitrate controls in Fast Mode; display that Fast Mode preserves the original audio; show final file name and byte size; keep only one active UI job.
 
-- [ ] **Step 6: Run client tests, lint, and build**
+- [x] **Step 6: Run client tests, lint, and build**
 
 Run: `npm --prefix client test`
 Run: `npm --prefix client run lint`
 Run: `npm --prefix client run build`
 Expected: all commands PASS without warnings.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 
 ```bash
 git add client/src/App.tsx client/src/lib/download-jobs.ts client/src/lib/youtube.ts client/test/download-jobs.test.ts client/test/youtube.test.ts
@@ -348,11 +348,11 @@ git commit -m "feat: add download progress and quality controls"
 - Consumes: all production behavior from Tasks 1-5.
 - Produces: deployment configuration and manual smoke-test instructions.
 
-- [ ] **Step 1: Document the job flow and options**
+- [x] **Step 1: Document the job flow and options**
 
 Document the six job/health routes, default MP3 192 kbps, Fast Mode limitations, job TTL, single-process limitation, required binaries, and fixture-based automated tests.
 
-- [ ] **Step 2: Run the complete verification matrix**
+- [x] **Step 2: Run the complete verification matrix**
 
 Run: `npm --prefix server test`
 Run: `npm --prefix server run test:engine`
@@ -366,11 +366,11 @@ Run: `npm --prefix client audit`
 Run: `git diff --check`
 Expected: every command exits 0; audits report no known vulnerabilities.
 
-- [ ] **Step 3: Run a local fixture smoke test**
+- [x] **Step 3: Run a local fixture smoke test**
 
 Start the server with `PYTHON_BIN=node ENGINE_SCRIPT_PATH=test/fixtures/fake-engine.js HEALTHCHECK_BINARIES=false`, create an MP3 job, observe progress, download its file, repeat with Fast Mode, cancel a blocking job, and retry a failed job. No external network is required.
 
-- [ ] **Step 4: Commit documentation**
+- [x] **Step 4: Commit documentation**
 
 ```bash
 git add README.md server/README.md docs/superpowers/specs/2026-09-16-download-jobs-design.md docs/superpowers/plans/2026-09-16-download-jobs-quality-plan.md
