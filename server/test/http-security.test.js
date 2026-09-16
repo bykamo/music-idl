@@ -46,6 +46,18 @@ test('HTTP boundary rejects unsafe URLs and does not expose an open proxy', { ti
         assert.equal(invalidDownload.status, 400);
         assert.equal((await invalidDownload.json()).error, 'INVALID_YOUTUBE_URL');
 
+        const invalidJob = await fetch(`${baseUrl}/api/jobs`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                url: 'https://example.com/audio',
+                format: 'mp3',
+                bitrate: 192
+            })
+        });
+        assert.equal(invalidJob.status, 400);
+        assert.equal((await invalidJob.json()).error, 'INVALID_YOUTUBE_URL');
+
         const appleSearch = await fetch(
             `${baseUrl}/api/search?q=${encodeURIComponent('https://music.apple.com/id/album/example/1')}`
         );

@@ -7,10 +7,12 @@ const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const { execFile } = require('child_process');
 const {
-    DownloadGate,
     normalizeYouTubeUrl,
     videoUrlFromId
 } = require('./lib/download-policy');
+const { normalizeDownloadOptions, allowedAudioPath } = require('./lib/download-options');
+const { DownloadJobManager } = require('./lib/download-job-manager');
+const { createEngineRunner } = require('./lib/engine-runner');
 require('dotenv').config();
 
 const app = express();
@@ -18,15 +20,13 @@ const port = process.env.PORT || 5200;
 const SITE_URL = process.env.SITE_URL || 'https://musicidl.web.id';
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python3';
 const YT_DLP_BIN = process.env.YT_DLP_BIN || 'yt-dlp';
+const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
+const DENO_BIN = process.env.DENO_BIN || 'deno';
 const DOWNLOAD_PROXY = process.env.DOWNLOAD_PROXY || '';
 const ENGINE_TIMEOUT_MS = Number.parseInt(process.env.ENGINE_TIMEOUT_MS || '600000', 10);
 const INFO_TIMEOUT_MS = Number.parseInt(process.env.INFO_TIMEOUT_MS || '30000', 10);
 const MAX_ACTIVE_DOWNLOADS = Number.parseInt(process.env.MAX_ACTIVE_DOWNLOADS || '2', 10);
 const MAX_QUEUED_DOWNLOADS = Number.parseInt(process.env.MAX_QUEUED_DOWNLOADS || '8', 10);
-const downloadGate = new DownloadGate({
-    maxActive: Math.max(1, MAX_ACTIVE_DOWNLOADS || 2),
-    maxQueued: Math.max(0, MAX_QUEUED_DOWNLOADS || 0)
-});
 
 app.disable('x-powered-by');
 app.use(compression());
@@ -118,8 +118,11 @@ app.use(express.static(path.join(__dirname, 'dist'), {
     }
 }));
 
-// Helper to run python music_dl_engine script
-const engineScriptPath = path.join(__dirname, 'engine', 'music_dl.py');
+// Download engine and in-memory jobs
+const engineScriptPath = path.resolve(
+    __dirname,
+    process.env.ENGINE_SCRIPT_PATH || path.join('engine', 'music_dl.py')
+);
 const outputDir = path.join(__dirname, 'output_music');
 const JOB_TTL_MS = Number.parseInt(process.env.JOB_TTL_MS || '3600000', 10);
 
@@ -139,53 +142,27 @@ for (const entry of fs.readdirSync(outputDir, { withFileTypes: true })) {
     }
 }
 
-function removeJobDir(jobDir) {
+function removeJobDir(value) {
+    const jobDir = typeof value === 'string' ? value : value?.jobDir;
+    if (!jobDir) return;
     fs.rm(jobDir, { recursive: true, force: true }, () => {});
 }
 
-function runEngineDownload(url, signal) {
-    return new Promise((resolve, reject) => {
-        const jobDir = fs.mkdtempSync(path.join(outputDir, 'job-'));
-        try {
-            execFile(PYTHON_BIN, [engineScriptPath, url, jobDir], {
-                cwd: __dirname,
-                env: process.env,
-                maxBuffer: 5 * 1024 * 1024,
-                timeout: Math.max(1000, ENGINE_TIMEOUT_MS || 600000),
-                signal
-            }, (error, stdout, stderr) => {
-                if (error) {
-                    if (stderr) console.error('Engine error:', stderr.slice(-4000));
-                    removeJobDir(jobDir);
-                    return reject(error);
-                }
-
-                try {
-                    const resultLine = stdout.trim().split('\n').filter(Boolean).at(-1);
-                    const result = JSON.parse(resultLine);
-                    const fullPath = path.resolve(result.file_path);
-                    const relativePath = path.relative(jobDir, fullPath);
-                    if (
-                        result.status !== 'ok'
-                        || relativePath.startsWith('..')
-                        || path.isAbsolute(relativePath)
-                        || path.extname(fullPath).toLowerCase() !== '.mp3'
-                        || !fs.existsSync(fullPath)
-                    ) {
-                        throw new Error('Engine returned an invalid MP3 path');
-                    }
-                    resolve({ filePath: fullPath, fileName: path.basename(fullPath), jobDir });
-                } catch (err) {
-                    removeJobDir(jobDir);
-                    reject(err);
-                }
-            });
-        } catch (err) {
-            removeJobDir(jobDir);
-            reject(err);
-        }
-    });
-}
+const runEngineDownload = createEngineRunner({
+    binary: PYTHON_BIN,
+    scriptPath: engineScriptPath,
+    cwd: __dirname,
+    env: { ...process.env, FFMPEG_BIN },
+    timeoutMs: Math.max(1000, ENGINE_TIMEOUT_MS || 600000),
+    outputDir
+});
+const downloadJobs = new DownloadJobManager({
+    maxActive: Math.max(1, MAX_ACTIVE_DOWNLOADS || 2),
+    maxQueued: Math.max(0, MAX_QUEUED_DOWNLOADS || 0),
+    ttlMs: Math.max(1000, JOB_TTL_MS || 3600000),
+    runner: runEngineDownload,
+    cleanupResult: removeJobDir
+});
 
 function sendPolicyError(res, err) {
     if (err && err.statusCode) {
@@ -193,6 +170,132 @@ function sendPolicyError(res, err) {
     }
     return null;
 }
+
+const JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+let healthCache;
+
+function clientIdFromRequest(req) {
+    return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
+function jobIdFromRequest(req) {
+    if (!JOB_ID_PATTERN.test(req.params.id || '')) {
+        const error = new Error('Job unduhan tidak ditemukan.');
+        error.code = 'JOB_NOT_FOUND';
+        error.statusCode = 404;
+        throw error;
+    }
+    return req.params.id;
+}
+
+function checkBinary(command, args) {
+    return new Promise(resolve => {
+        execFile(command, args, { timeout: 3000 }, error => resolve(!error));
+    });
+}
+
+async function getHealthChecks() {
+    if (healthCache && healthCache.expiresAt > Date.now()) return healthCache.value;
+
+    let outputDirectory = true;
+    try {
+        fs.accessSync(outputDir, fs.constants.R_OK | fs.constants.W_OK);
+    } catch {
+        outputDirectory = false;
+    }
+
+    let python = true;
+    let ytDlp = true;
+    let ffmpeg = true;
+    let deno = true;
+    if (process.env.HEALTHCHECK_BINARIES !== 'false') {
+        [python, ytDlp, ffmpeg, deno] = await Promise.all([
+            checkBinary(PYTHON_BIN, ['--version']),
+            checkBinary(YT_DLP_BIN, ['--version']),
+            checkBinary(FFMPEG_BIN, ['-version']),
+            DENO_BIN ? checkBinary(DENO_BIN, ['--version']) : Promise.resolve(true)
+        ]);
+    }
+
+    const value = { python, ytDlp, ffmpeg, deno, outputDirectory };
+    healthCache = { value, expiresAt: Date.now() + 5000 };
+    return value;
+}
+
+app.get('/api/health', async (req, res) => {
+    const checks = await getHealthChecks();
+    const ready = Object.values(checks).every(Boolean);
+    res.status(ready ? 200 : 503).json({
+        status: ready ? 'ok' : 'degraded',
+        ready,
+        checks,
+        queue: downloadJobs.stats()
+    });
+});
+
+app.post('/api/jobs', downloadLimiter, (req, res) => {
+    try {
+        const url = normalizeYouTubeUrl(req.body?.url);
+        const options = normalizeDownloadOptions(req.body);
+        const job = downloadJobs.create({
+            clientId: clientIdFromRequest(req),
+            url,
+            options
+        });
+        res.status(202).json(job);
+    } catch (error) {
+        return sendPolicyError(res, error)
+            || res.status(500).json({ error: 'DOWNLOAD_FAILED', message: 'Job unduhan tidak dapat dibuat.' });
+    }
+});
+
+app.get('/api/jobs/:id', (req, res) => {
+    try {
+        res.json(downloadJobs.getPublic(jobIdFromRequest(req)));
+    } catch (error) {
+        return sendPolicyError(res, error)
+            || res.status(500).json({ error: 'DOWNLOAD_FAILED', message: 'Status job tidak dapat dibaca.' });
+    }
+});
+
+app.delete('/api/jobs/:id', (req, res) => {
+    try {
+        res.status(202).json(downloadJobs.cancel(jobIdFromRequest(req)));
+    } catch (error) {
+        return sendPolicyError(res, error)
+            || res.status(500).json({ error: 'DOWNLOAD_FAILED', message: 'Job tidak dapat dibatalkan.' });
+    }
+});
+
+app.post('/api/jobs/:id/retry', downloadLimiter, (req, res) => {
+    try {
+        const job = downloadJobs.retry(jobIdFromRequest(req), clientIdFromRequest(req));
+        res.status(202).json(job);
+    } catch (error) {
+        return sendPolicyError(res, error)
+            || res.status(500).json({ error: 'DOWNLOAD_FAILED', message: 'Job tidak dapat dicoba ulang.' });
+    }
+});
+
+app.get('/api/jobs/:id/file', (req, res) => {
+    try {
+        const id = jobIdFromRequest(req);
+        const result = downloadJobs.consume(id);
+        if (!allowedAudioPath(result.jobDir, result.filePath) || !fs.existsSync(result.filePath)) {
+            downloadJobs.remove(id);
+            return res.status(410).json({ error: 'FILE_GONE', message: 'File unduhan sudah tidak tersedia.' });
+        }
+        return res.download(result.filePath, result.fileName, error => {
+            if (error && !res.headersSent) {
+                res.status(500).json({ error: 'FILE_SEND_FAILED', message: 'File gagal dikirim.' });
+            }
+            downloadJobs.remove(id);
+        });
+    } catch (error) {
+        return sendPolicyError(res, error)
+            || res.status(500).json({ error: 'DOWNLOAD_FAILED', message: 'File tidak dapat diambil.' });
+    }
+});
 
 // API Routes
 app.get('/api/search', async (req, res) => {
@@ -375,39 +478,54 @@ app.get('/api/fallback-download', (req, res) => {
 });
 
 app.get('/api/engine-download', downloadLimiter, async (req, res) => {
-    const abortController = new AbortController();
-    let engineFinished = false;
+    let jobId;
+    let sendingFile = false;
     res.once('close', () => {
-        if (!engineFinished) abortController.abort();
+        if (!sendingFile && jobId) {
+            try {
+                downloadJobs.cancel(jobId);
+            } catch {}
+        }
     });
 
     try {
         const targetUrl = normalizeYouTubeUrl(req.query.url);
         const videoId = new URL(targetUrl).searchParams.get('v');
         console.log(`[Engine] Memproses video ${videoId}`);
-        const clientId = req.ip || req.socket.remoteAddress || 'unknown';
-        const { filePath, fileName, jobDir } = await downloadGate.run(
-            clientId,
-            () => runEngineDownload(targetUrl, abortController.signal)
-        );
-        engineFinished = true;
+        const created = downloadJobs.create({
+            clientId: clientIdFromRequest(req),
+            url: targetUrl,
+            options: { format: 'mp3', bitrate: 320 }
+        });
+        jobId = created.id;
 
-        res.download(filePath, fileName, (err) => {
-            if (err) {
-                console.error('File send error:', err.message);
-            }
-            removeJobDir(jobDir);
+        let job = created;
+        while (!['completed', 'failed', 'cancelled'].includes(job.status)) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            job = downloadJobs.getPublic(jobId);
+        }
+        if (job.status !== 'completed') {
+            const error = new Error(job.error?.message || 'Unduhan tidak selesai.');
+            error.code = job.error?.code || 'DOWNLOAD_FAILED';
+            throw error;
+        }
+
+        const result = downloadJobs.consume(jobId);
+        sendingFile = true;
+        return res.download(result.filePath, result.fileName, error => {
+            if (error) console.error('File send error:', error.message);
+            downloadJobs.remove(jobId);
         });
     } catch (err) {
-        engineFinished = true;
         if (sendPolicyError(res, err)) return;
-        if (err.name === 'AbortError' || res.destroyed) return;
+        if (res.destroyed) return;
         console.error('Engine download process failed:', err.message);
         if (!res.headersSent) {
-            const status = err.killed ? 504 : 500;
+            const timeout = err.code === 'DOWNLOAD_TIMEOUT';
+            const status = timeout ? 504 : 500;
             res.status(status).json({
-                error: err.killed ? 'DOWNLOAD_TIMEOUT' : 'DOWNLOAD_FAILED',
-                message: err.killed
+                error: timeout ? 'DOWNLOAD_TIMEOUT' : 'DOWNLOAD_FAILED',
+                message: timeout
                     ? 'Proses unduhan melewati batas waktu.'
                     : 'Gagal mengunduh musik dari engine.'
             });
@@ -420,9 +538,15 @@ app.use('/api', (req, res) => {
 });
 
 if (require.main === module) {
-    app.listen(port, () => {
+    const server = app.listen(port, () => {
         console.log(`Server running at http://localhost:${port}`);
     });
+    const shutdown = () => {
+        downloadJobs.close();
+        server.close(() => process.exit(0));
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
 }
 
 module.exports = { app };
