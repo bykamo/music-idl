@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import re
@@ -44,6 +45,29 @@ VERSION_PATTERNS = {
 
 def log(message):
     print(message, file=sys.stderr, flush=True)
+
+
+def emit_event(stage, progress):
+    payload = json.dumps(
+        {"stage": stage, "progress": max(0, min(100, int(progress)))},
+        ensure_ascii=True,
+    )
+    print(f"MUSIC_IDL_EVENT {payload}", file=sys.stderr, flush=True)
+
+
+def download_progress_hook(status):
+    if status.get("status") == "downloading":
+        downloaded = status.get("downloaded_bytes") or 0
+        total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+        progress = 5 + round((downloaded / total) * 77) if total else 5
+        emit_event("downloading", progress)
+    elif status.get("status") == "finished":
+        emit_event("downloading", 82)
+
+
+def postprocessor_progress_hook(status):
+    if status.get("status") in {"started", "processing"}:
+        emit_event("encoding", 88)
 
 
 def clean_display_text(value):
@@ -423,6 +447,7 @@ def locate_thumbnail(base_path):
 
 
 def finalize_download(mp3_path, info, fallback_info=None, custom_thumbnail_url=None):
+    emit_event("tagging", 94)
     identity = extract_track_identity(info, fallback_info)
     base_path = os.path.splitext(mp3_path)[0]
     youtube_artwork = locate_thumbnail(base_path)
@@ -495,7 +520,7 @@ def output_template(output_dir):
     return os.path.join(output_dir, "%(title)s [%(id)s].%(ext)s")
 
 
-def build_ydl_options(output_dir):
+def build_ydl_options(output_dir, output_format="mp3", bitrate=192):
     def reject_long_media(info, *, incomplete=False):
         duration = info.get("duration")
         if duration and duration > MAX_DURATION_SECONDS:
@@ -503,25 +528,32 @@ def build_ydl_options(output_dir):
         return None
 
     options = {
-        "format": "bestaudio/best",
+        "format": (
+            "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+            if output_format == "original"
+            else "bestaudio/best"
+        ),
         "match_filter": reject_long_media,
         "max_filesize": MAX_SOURCE_BYTES,
         "socket_timeout": 30,
         "noplaylist": True,
         "extractor_args": {"youtube": {"player_client": ["android"]}},
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",
-            },
-            {"key": "FFmpegMetadata"},
-        ],
-        "writethumbnail": True,
+        "writethumbnail": output_format == "mp3",
         "outtmpl": output_template(output_dir),
         "quiet": True,
         "noprogress": True,
+        "progress_hooks": [download_progress_hook],
     }
+    if output_format == "mp3":
+        options["postprocessors"] = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": str(bitrate),
+            },
+            {"key": "FFmpegMetadata"},
+        ]
+        options["postprocessor_hooks"] = [postprocessor_progress_hook]
     if DOWNLOAD_PROXY:
         options["proxy"] = DOWNLOAD_PROXY
     if DENO_BIN:
@@ -531,15 +563,15 @@ def build_ydl_options(output_dir):
     return options
 
 
-def find_generated_mp3(output_dir, video_id=None):
+def find_generated_audio(output_dir, output_format="mp3", video_id=None):
+    extensions = {".mp3"} if output_format == "mp3" else {".m4a", ".webm", ".opus"}
     files = [
         os.path.join(output_dir, name)
         for name in os.listdir(output_dir)
-        if name.lower().endswith(".mp3")
+        if os.path.splitext(name)[1].lower() in extensions
     ]
     if video_id:
-        marker = f"[{video_id}].mp3"
-        exact = [path for path in files if path.endswith(marker)]
+        exact = [path for path in files if f"[{video_id}]" in os.path.basename(path)]
         if exact:
             return exact[0]
     if len(files) == 1:
@@ -547,19 +579,21 @@ def find_generated_mp3(output_dir, video_id=None):
     return max(files, key=os.path.getmtime) if files else None
 
 
-def download_music(url, output_dir):
+def download_music(url, output_dir, output_format="mp3", bitrate=192):
     os.makedirs(output_dir, exist_ok=True)
-    ydl_opts = build_ydl_options(output_dir)
+    ydl_opts = build_ydl_options(output_dir, output_format, bitrate)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as downloader:
+            emit_event("metadata", 2)
             log(f"Mencoba direct download: {url}")
             info = downloader.extract_info(url, download=True)
             if info:
-                mp3_filename = find_generated_mp3(output_dir, info.get("id"))
-                if mp3_filename and os.path.exists(mp3_filename):
-                    finalize_download(mp3_filename, info)
-                    return mp3_filename
+                audio_filename = find_generated_audio(output_dir, output_format, info.get("id"))
+                if audio_filename and os.path.exists(audio_filename):
+                    if output_format == "mp3":
+                        finalize_download(audio_filename, info)
+                    return audio_filename
     except Exception as error:
         log(f"Direct download gagal ({error}), mengaktifkan fallback hybrid...")
 
@@ -583,15 +617,20 @@ def download_music(url, output_dir):
                 if not fallback_url:
                     continue
                 downloaded_entry = downloader.extract_info(fallback_url, download=True)
-                mp3_filename = find_generated_mp3(output_dir, downloaded_entry.get("id"))
-                if mp3_filename and os.path.exists(mp3_filename):
-                    finalize_download(
-                        mp3_filename,
-                        downloaded_entry,
-                        oembed,
-                        oembed.get("thumbnail"),
-                    )
-                    return mp3_filename
+                audio_filename = find_generated_audio(
+                    output_dir,
+                    output_format,
+                    downloaded_entry.get("id"),
+                )
+                if audio_filename and os.path.exists(audio_filename):
+                    if output_format == "mp3":
+                        finalize_download(
+                            audio_filename,
+                            downloaded_entry,
+                            oembed,
+                            oembed.get("thumbnail"),
+                        )
+                    return audio_filename
     except Exception as error:
         log(f"Fallback search gagal: {error}")
 
@@ -599,16 +638,30 @@ def download_music(url, output_dir):
 
 
 def main():
-    if len(sys.argv) < 2:
-        log("Penggunaan: python3 music_dl.py <LINK_YOUTUBE_MUSIK> [OUTPUT_DIR]")
-        return 1
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("url")
+    parser.add_argument("output_dir", nargs="?")
+    parser.add_argument("--format", choices=("mp3", "original"), default="mp3")
+    parser.add_argument("--bitrate", choices=(128, 192, 320), type=int, default=192)
+    args = parser.parse_args()
     default_output = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output_music")
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else default_output
-    mp3_path = download_music(sys.argv[1], os.path.abspath(output_dir))
+    output_dir = args.output_dir or default_output
+    audio_path = download_music(
+        args.url,
+        os.path.abspath(output_dir),
+        args.format,
+        args.bitrate,
+    )
+    extension = os.path.splitext(audio_path)[1].lower().lstrip(".")
     print(
         json.dumps(
-            {"status": "ok", "file_path": os.path.abspath(mp3_path)},
+            {
+                "status": "ok",
+                "file_path": os.path.abspath(audio_path),
+                "format": extension,
+                "bitrate": args.bitrate if args.format == "mp3" else None,
+                "file_size": os.path.getsize(audio_path),
+            },
             ensure_ascii=True,
         ),
         flush=True,
