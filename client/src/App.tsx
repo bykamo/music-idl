@@ -1,13 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2 } from 'lucide-react';
+import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2, RotateCcw, Square, Zap } from 'lucide-react';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
 import DotField from '@/components/ui/DotField';
 import Loader from '@/components/ui/loader';
 import { SearchSkeleton } from '@/components/ui/search-skeleton';
 import { AnimatedThemeToggle } from '@/components/ui/theme-toggle';
 import { LimitDialog } from '@/components/ui/limit-dialog';
-import { extractYouTubeVideoId, safeInternalDownloadUrl } from '@/lib/youtube';
+import { extractYouTubeVideoId } from '@/lib/youtube';
+import {
+  jobFileUrl,
+  jobStageLabel,
+  readDownloadPreference,
+  writeDownloadPreference,
+  type DownloadFormat,
+  type DownloadJob,
+  type Mp3Bitrate,
+} from '@/lib/download-jobs';
 
 interface Thumbnail {
   url: string;
@@ -64,17 +73,14 @@ function getApiMessage(error: unknown, fallback: string) {
   return error.response?.data?.message || fallback;
 }
 
-function getDownloadUrlFromApiResponse(data: unknown) {
-  if (!data || typeof data !== 'object') return null;
-  return safeInternalDownloadUrl((data as { download_url?: unknown }).download_url);
-}
-
 function App() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
-  const [downloading, setDownloading] = useState<string | null>(null);
+  const [creatingDownload, setCreatingDownload] = useState<string | null>(null);
+  const [activeDownload, setActiveDownload] = useState<{ videoId: string, job: DownloadJob } | null>(null);
+  const [downloadPreference, setDownloadPreference] = useState(readDownloadPreference);
   const [detailedInfo, setDetailedInfo] = useState<Record<string, ExternalInfo>>({});
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isLimitOpen, setIsLimitOpen] = useState(false);
@@ -92,6 +98,7 @@ function App() {
   });
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const jobRequestRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -108,6 +115,14 @@ function App() {
     }
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    writeDownloadPreference(downloadPreference);
+  }, [downloadPreference]);
+
+  useEffect(() => () => {
+    jobRequestRef.current += 1;
+  }, []);
 
   const handleAction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,44 +244,65 @@ function App() {
     }
   };
 
-  const triggerDownload = (url: string, title: string, videoId: string) => {
-    const downloadUrl = safeInternalDownloadUrl(url);
+  const triggerJobFile = (job: DownloadJob) => {
+    const downloadUrl = jobFileUrl(job.id);
     if (!downloadUrl) {
       setErrorDialog({
         isOpen: true,
         title: 'Link Unduhan Tidak Valid',
-        message: 'Server mengirim link unduhan yang tidak dapat dipercaya.',
+        message: 'ID job unduhan tidak valid.',
         isLimit: false
       });
       return;
     }
 
-    setDownloading(videoId);
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.setAttribute('download', `${title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3`);
+    if (job.fileName) link.setAttribute('download', job.fileName);
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    setDownloading(null);
     setDownloadSuccess(true);
   };
 
-  const downloadMusic = async (videoId: string, title: string) => {
-    setDownloading(videoId);
+  const pollDownloadJob = async (videoId: string, initialJob: DownloadJob, requestToken: number) => {
+    let job = initialJob;
     try {
-      const ext = detailedInfo[videoId];
-      if (ext?.download_url) {
-        triggerDownload(ext.download_url, ext.title || title, videoId);
-        return;
+      while (requestToken === jobRequestRef.current && ['queued', 'running'].includes(job.status)) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (requestToken !== jobRequestRef.current) return;
+        const response = await axios.get<DownloadJob>(`${API_BASE}/jobs/${job.id}`);
+        job = response.data;
+        setActiveDownload({ videoId, job });
       }
+      if (requestToken === jobRequestRef.current && job.status === 'completed') {
+        triggerJobFile(job);
+      }
+    } catch (err: unknown) {
+      if (requestToken !== jobRequestRef.current) return;
+      setErrorDialog({
+        isOpen: true,
+        title: 'Status Unduhan Gagal',
+        message: getApiMessage(err, 'Status unduhan tidak dapat diperbarui.'),
+        isLimit: getApiStatus(err) === 429
+      });
+    }
+  };
 
-      const response = await axios.get(`${API_BASE}/download?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`);
-      const downloadUrl = getDownloadUrlFromApiResponse(response.data);
-      if (downloadUrl) {
-        triggerDownload(downloadUrl, response.data.title || title, videoId);
-      }
+  const downloadMusic = async (videoId: string) => {
+    const requestToken = ++jobRequestRef.current;
+    setCreatingDownload(videoId);
+    setDownloadSuccess(false);
+    try {
+      const response = await axios.post<DownloadJob>(`${API_BASE}/jobs`, {
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        format: downloadPreference.format,
+        bitrate: downloadPreference.bitrate,
+      });
+      if (requestToken !== jobRequestRef.current) return;
+      setActiveDownload({ videoId, job: response.data });
+      void pollDownloadJob(videoId, response.data, requestToken);
     } catch (err: unknown) {
       if (getApiStatus(err) === 429) {
         setIsLimitOpen(true);
@@ -282,23 +318,62 @@ function App() {
         return;
       }
 
-      try {
-        const fb = await axios.get(`${API_BASE}/fallback-download?videoId=${videoId}`);
-        const fallbackUrl = getDownloadUrlFromApiResponse(fb.data);
-        if (fallbackUrl) {
-          triggerDownload(fallbackUrl, title, videoId);
-        } else {
-          throw new Error('Server tidak mengirim link unduhan yang valid.', { cause: err });
-        }
-      } catch (fallbackError: unknown) {
-        setErrorDialog({
-          isOpen: true,
-          title: 'Gagal',
-          message: getApiMessage(fallbackError, 'Gagal mengunduh lagu. Silakan coba beberapa saat lagi.'),
-          isLimit: false
-        });
+      setErrorDialog({
+        isOpen: true,
+        title: 'Gagal',
+        message: getApiMessage(err, 'Job unduhan tidak dapat dibuat.'),
+        isLimit: false
+      });
+    } finally {
+      if (requestToken === jobRequestRef.current) setCreatingDownload(null);
+    }
+  };
+
+  const cancelDownload = async (videoId: string, job: DownloadJob) => {
+    const requestToken = ++jobRequestRef.current;
+    try {
+      const response = await axios.delete<DownloadJob>(`${API_BASE}/jobs/${job.id}`);
+      if (requestToken === jobRequestRef.current) {
+        setActiveDownload({ videoId, job: response.data });
       }
-    } finally { setDownloading(null); }
+    } catch (err: unknown) {
+      setErrorDialog({
+        isOpen: true,
+        title: 'Gagal Membatalkan',
+        message: getApiMessage(err, 'Job tidak dapat dibatalkan.'),
+        isLimit: false
+      });
+    }
+  };
+
+  const retryDownload = async (videoId: string, job: DownloadJob) => {
+    const requestToken = ++jobRequestRef.current;
+    setCreatingDownload(videoId);
+    try {
+      const response = await axios.post<DownloadJob>(`${API_BASE}/jobs/${job.id}/retry`);
+      if (requestToken !== jobRequestRef.current) return;
+      setActiveDownload({ videoId, job: response.data });
+      void pollDownloadJob(videoId, response.data, requestToken);
+    } catch (err: unknown) {
+      setErrorDialog({
+        isOpen: true,
+        title: 'Gagal Mencoba Ulang',
+        message: getApiMessage(err, 'Job tidak dapat dicoba ulang.'),
+        isLimit: getApiStatus(err) === 429
+      });
+    } finally {
+      if (requestToken === jobRequestRef.current) setCreatingDownload(null);
+    }
+  };
+
+  const selectFormat = (format: DownloadFormat) => {
+    setDownloadPreference(format === 'original'
+      ? { format, bitrate: null }
+      : { format, bitrate: 192 });
+  };
+
+  const selectBitrate = (bitrate: Mp3Bitrate) => {
+    setDownloadPreference({ format: 'mp3', bitrate });
   };
 
   const fetchExternalInfo = async (videoId: string) => {
@@ -339,7 +414,9 @@ function App() {
   };
 
   const formatSize = (bytes: number) => {
-    if (!bytes) return '0 MB';
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   };
 
@@ -484,6 +561,10 @@ function App() {
               {results.map((item) => {
                 const ext = detailedInfo[item.videoId];
                 const platform = 'YouTube Music';
+                const job = activeDownload?.videoId === item.videoId ? activeDownload.job : null;
+                const jobBusy = job ? ['queued', 'running'].includes(job.status) : false;
+                const anyJobBusy = creatingDownload !== null
+                  || (activeDownload ? ['queued', 'running'].includes(activeDownload.job.status) : false);
                 return (
                   <div key={item.videoId} className="glass-card flex flex-col group relative hover:-translate-y-1 w-full">
                     <div className="relative aspect-square overflow-hidden bg-muted">
@@ -505,7 +586,9 @@ function App() {
                         <div className="flex flex-col gap-1 w-full">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="bg-primary px-2 py-0.5 rounded-full text-[10px] font-bold uppercase w-fit text-primary-foreground">
-                              {ext ? ext.bitrate : 'hingga 320kbps'}
+                              {downloadPreference.format === 'original'
+                                ? 'Fast Mode'
+                                : `${downloadPreference.bitrate}kbps`}
                             </span>
                             <span className="bg-black/70 border border-white/10 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white">
                               {platform}
@@ -546,27 +629,125 @@ function App() {
                           <div className="flex justify-between text-[11px] font-medium"><span className="text-foreground">{formatSize(ext.filesize)}</span><span className="text-foreground">{ext.bitrate}</span></div>
                         </div>
                       )}
-                      <div className="mt-auto pt-2 flex justify-center">
-                        <button
-                          onClick={() => downloadMusic(item.videoId, ext?.title || item.name)}
-                          disabled={!!downloading}
-                          className={`w-full relative px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 overflow-hidden ${downloading === item.videoId ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]'}`}
-                        >
-                          <span className="relative z-10 flex items-center gap-2">
-                            {downloading === item.videoId ? (
-                              <>
-                                <Loader2 className="animate-spin" size={16} />
-                                Menyiapkan unduhan...
-                              </>
-                            ) : (
-                              <>
-                                <Download size={16} />
-                                Unduh MP3
-                              </>
-                            )}
-                          </span>
-                        </button>
+                      <div className="rounded-xl border border-border bg-muted/40 p-3 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Format</span>
+                          <div className="flex rounded-full border border-border bg-card p-1" aria-label="Pilih format audio">
+                            <button
+                              type="button"
+                              onClick={() => selectFormat('mp3')}
+                              disabled={anyJobBusy}
+                              aria-pressed={downloadPreference.format === 'mp3'}
+                              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${downloadPreference.format === 'mp3' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                              MP3
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => selectFormat('original')}
+                              disabled={anyJobBusy}
+                              aria-pressed={downloadPreference.format === 'original'}
+                              className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition-colors disabled:opacity-50 ${downloadPreference.format === 'original' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                              <Zap size={12} /> Fast Mode
+                            </button>
+                          </div>
+                        </div>
+                        {downloadPreference.format === 'mp3' ? (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] text-muted-foreground">Kualitas</span>
+                            <div className="flex gap-1" aria-label="Pilih bitrate MP3">
+                              {([128, 192, 320] as Mp3Bitrate[]).map((bitrate) => (
+                                <button
+                                  key={bitrate}
+                                  type="button"
+                                  onClick={() => selectBitrate(bitrate)}
+                                  disabled={anyJobBusy}
+                                  aria-pressed={downloadPreference.bitrate === bitrate}
+                                  className={`rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50 ${downloadPreference.bitrate === bitrate ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-card'}`}
+                                >
+                                  {bitrate}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            Tanpa encoding ulang: lebih cepat dan mempertahankan format audio sumber.
+                          </p>
+                        )}
                       </div>
+
+                      {job && (
+                        <div className="rounded-xl border border-border bg-card p-3 space-y-2" aria-live="polite">
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="font-semibold text-foreground">{jobStageLabel(job.stage)}</span>
+                            <span className="font-mono text-muted-foreground">{job.progress}%</span>
+                          </div>
+                          <div
+                            className="h-2 overflow-hidden rounded-full bg-muted"
+                            role="progressbar"
+                            aria-label={jobStageLabel(job.stage)}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={job.progress}
+                          >
+                            <div
+                              className="h-full rounded-full bg-primary transition-[width] duration-300"
+                              style={{ width: `${Math.max(0, Math.min(100, job.progress))}%` }}
+                            />
+                          </div>
+                          {job.status === 'completed' && (
+                            <p className="text-xs text-muted-foreground">
+                              {job.fileName} · {formatSize(job.fileSize || 0)} · {job.outputFormat.toUpperCase()}
+                            </p>
+                          )}
+                          {job.error && <p className="text-xs text-red-500">{job.error.message}</p>}
+                          {jobBusy && (
+                            <button
+                              type="button"
+                              onClick={() => void cancelDownload(item.videoId, job)}
+                              className="flex w-full items-center justify-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-bold text-foreground transition-colors hover:bg-muted"
+                            >
+                              <Square size={12} fill="currentColor" /> Batalkan
+                            </button>
+                          )}
+                          {['failed', 'cancelled'].includes(job.status) && (
+                            <button
+                              type="button"
+                              onClick={() => void retryDownload(item.videoId, job)}
+                              disabled={creatingDownload === item.videoId}
+                              className="flex w-full items-center justify-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-bold text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                            >
+                              <RotateCcw size={13} /> Coba Lagi
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {(!job || job.status === 'completed') && (
+                        <div className="mt-auto pt-2 flex justify-center">
+                          <button
+                            onClick={() => void downloadMusic(item.videoId)}
+                            disabled={anyJobBusy}
+                            className={`w-full relative px-8 py-2.5 rounded-full font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 overflow-hidden disabled:opacity-60 ${creatingDownload === item.videoId ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98]'}`}
+                          >
+                            <span className="relative z-10 flex items-center gap-2">
+                              {creatingDownload === item.videoId ? (
+                                <>
+                                  <Loader2 className="animate-spin" size={16} />
+                                  Membuat job...
+                                </>
+                              ) : (
+                                <>
+                                  <Download size={16} />
+                                  {job?.status === 'completed' ? 'Unduh Lagi' : downloadPreference.format === 'original' ? 'Unduh Fast Mode' : 'Unduh MP3'}
+                                </>
+                              )}
+                            </span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -582,7 +763,7 @@ function App() {
                 {[
                   ['1', 'Cari musik', 'Ketik judul lagu atau link YouTube.'],
                   ['2', 'Tempel link', 'Masukkan URL musik yang ingin diunduh.'],
-                  ['3', 'Unduh musik', 'Cek hasil dan unduh MP3.'],
+                  ['3', 'Unduh musik', 'Pilih MP3 atau Fast Mode lalu unduh.'],
                 ].map(([step, title, desc]) => (
                   <div key={step} className="rounded-2xl border border-border bg-card/80 p-4 shadow-sm">
                     <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">{step}</div>
@@ -597,7 +778,7 @@ function App() {
           <footer className="mt-14 pb-2 flex justify-center">
             <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-4 py-2 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur">
               <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-              Download MP3 cepat, simpel, dan responsif
+              Download audio cepat, simpel, dan responsif
             </div>
           </footer>
         </div>
