@@ -90,6 +90,16 @@ app.get('/sitemap.xml', (req, res) => {
 });
 
 const ytmusic = new YTMusic();
+if (DOWNLOAD_PROXY && DOWNLOAD_PROXY.startsWith('socks')) {
+    try {
+        const { SocksProxyAgent } = require('socks-proxy-agent');
+        const agent = new SocksProxyAgent(DOWNLOAD_PROXY);
+        ytmusic.client.defaults.httpsAgent = agent;
+        ytmusic.client.defaults.httpAgent = agent;
+    } catch (err) {
+        console.warn('Gagal memasang proxy ke YTMusic:', err.message);
+    }
+}
 let ytmusicInitPromise;
 
 async function initYT() {

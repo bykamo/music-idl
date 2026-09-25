@@ -61,6 +61,25 @@ class DownloadOptionsTest(unittest.TestCase):
             "uploader": "Random Uploads",
         }))
 
+    def test_build_clean_filename_strips_youtube_id_and_noise(self):
+        engine = load_engine_module()
+        identity = {
+            "title": "Numb (Official Music Video)",
+            "artist": "Linkin Park - Topic",
+        }
+        clean_name = engine.build_clean_filename(identity, "Linkin Park - Numb [7NK_TXDATPE].mp3")
+        self.assertEqual(clean_name, "Linkin Park - Numb.mp3")
+
+        # When title already contains artist
+        identity_with_both = {
+            "title": "Linkin Park - In The End",
+            "artist": "Linkin Park",
+        }
+        self.assertEqual(
+            engine.build_clean_filename(identity_with_both, "dummy.mp3"),
+            "Linkin Park - In The End.mp3"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

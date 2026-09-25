@@ -229,6 +229,18 @@ function App() {
     }
   };
 
+  const sanitizeDownloadTitle = (rawTitle: string): string => {
+    if (!rawTitle) return 'Audio Track';
+    const clean = rawTitle
+      .replace(/\s*\[[a-zA-Z0-9_-]{11}\]/g, '')
+      .replace(/\b(?:official\s+(?:music\s+)?video|official\s+audio|audio\s+official|lyric\s+video|lyrics?|visuali[sz]er|music\s+video|mv|hd|4k)\b/gi, '')
+      .replace(/[/\\?%*:|"<>]+/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^[-_.\s]+|[-_.\s]+$/g, '');
+    return clean || 'Audio Track';
+  };
+
   const triggerDownload = (url: string, title: string, videoId: string) => {
     const downloadUrl = safeInternalDownloadUrl(url);
     if (!downloadUrl) {
@@ -244,7 +256,7 @@ function App() {
     setDownloading(videoId);
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.setAttribute('download', `${title.replace(/[/\\?%*:|"<>]/g, '-')}.mp3`);
+    link.setAttribute('download', `${sanitizeDownloadTitle(title)}.mp3`);
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();

@@ -422,6 +422,40 @@ def locate_thumbnail(base_path):
     return None
 
 
+def sanitize_filename(name):
+    if not name:
+        return ""
+    name = re.sub(r"\s*\[[a-zA-Z0-9_-]{11}\]", "", name)
+    name = strip_channel_suffix(name)
+    name = strip_presentation_noise(name)
+    name = re.sub(r'[/\\?%*:|"<>]+', " - ", name)
+    name = re.sub(r"\s+", " ", name)
+    name = re.sub(r"\s*-\s*-\s*", " - ", name)
+    return name.strip(" .-_")
+
+
+def build_clean_filename(identity, original_filename=""):
+    title = sanitize_filename(identity.get("title") or "")
+    artist = sanitize_filename(identity.get("artist") or "")
+
+    if artist and title:
+        if normalize_text(title).startswith(normalize_text(artist)):
+            clean_base = title
+        else:
+            clean_base = f"{artist} - {title}"
+    elif title:
+        clean_base = title
+    elif artist:
+        clean_base = artist
+    else:
+        clean_base = sanitize_filename(os.path.splitext(os.path.basename(original_filename))[0]) or "Audio Track"
+
+    if len(clean_base) > 200:
+        clean_base = clean_base[:200].rstrip(" .-_")
+
+    return f"{clean_base}.mp3"
+
+
 def finalize_download(mp3_path, info, fallback_info=None, custom_thumbnail_url=None):
     identity = extract_track_identity(info, fallback_info)
     base_path = os.path.splitext(mp3_path)[0]
@@ -469,6 +503,21 @@ def finalize_download(mp3_path, info, fallback_info=None, custom_thumbnail_url=N
                 os.remove(candidate)
             except OSError:
                 pass
+
+    try:
+        clean_name = build_clean_filename(identity, mp3_path)
+        dir_name = os.path.dirname(mp3_path)
+        clean_mp3_path = os.path.join(dir_name, clean_name)
+        if clean_mp3_path != mp3_path:
+            if os.path.exists(clean_mp3_path):
+                os.remove(clean_mp3_path)
+            os.rename(mp3_path, clean_mp3_path)
+            log(f"File berhasil di-rename ke nama bersih: {clean_name}")
+            return clean_mp3_path
+    except Exception as error:
+        log(f"Gagal me-rename file ke nama bersih: {error}")
+
+    return mp3_path
 
 
 def get_oembed_info(url):
@@ -558,8 +607,7 @@ def download_music(url, output_dir):
             if info:
                 mp3_filename = find_generated_mp3(output_dir, info.get("id"))
                 if mp3_filename and os.path.exists(mp3_filename):
-                    finalize_download(mp3_filename, info)
-                    return mp3_filename
+                    return finalize_download(mp3_filename, info)
     except Exception as error:
         log(f"Direct download gagal ({error}), mengaktifkan fallback hybrid...")
 
@@ -585,13 +633,12 @@ def download_music(url, output_dir):
                 downloaded_entry = downloader.extract_info(fallback_url, download=True)
                 mp3_filename = find_generated_mp3(output_dir, downloaded_entry.get("id"))
                 if mp3_filename and os.path.exists(mp3_filename):
-                    finalize_download(
+                    return finalize_download(
                         mp3_filename,
                         downloaded_entry,
                         oembed,
                         oembed.get("thumbnail"),
                     )
-                    return mp3_filename
     except Exception as error:
         log(f"Fallback search gagal: {error}")
 
