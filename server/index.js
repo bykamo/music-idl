@@ -60,7 +60,7 @@ app.use('/api/', apiLimiter);
 
 const downloadLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 20,
+    max: 60,
     message: { error: 'DOWNLOAD_RATE_LIMIT', message: 'Batas unduhan per jam tercapai. Coba lagi nanti.' }
 });
 
@@ -303,8 +303,16 @@ async function getOEmbedFallback(url, videoId) {
 
 function getYoutubeVideoInfo(url, videoId) {
     return new Promise((resolve) => {
-        const args = ['--dump-single-json', '--no-playlist', '--socket-timeout', '15'];
+        const args = [
+            '--dump-single-json',
+            '--no-playlist',
+            '--socket-timeout', '15',
+            '--extractor-args', 'youtube:player_client=android,web_embedded,mweb'
+        ];
         if (DOWNLOAD_PROXY) args.push('--proxy', DOWNLOAD_PROXY);
+        const denoBin = process.env.DENO_BIN || '/usr/local/bin/deno';
+        args.push('--js-runtimes', `deno:${denoBin}`);
+        args.push('--remote-components', 'ejs:github');
         args.push(url);
         execFile(YT_DLP_BIN, args, {
             timeout: Math.max(1000, INFO_TIMEOUT_MS || 30000),

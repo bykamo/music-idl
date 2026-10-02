@@ -18,7 +18,7 @@ ITUNES_COUNTRY = os.environ.get("ITUNES_COUNTRY", "ID")
 USER_AGENT = "Music-IDL/1.0"
 DOWNLOAD_PROXY = os.environ.get("DOWNLOAD_PROXY", "").strip()
 DENO_BIN = os.environ.get("DENO_BIN", "deno").strip()
-ALLOW_REMOTE_COMPONENTS = os.environ.get("ALLOW_REMOTE_COMPONENTS", "false").lower() == "true"
+ALLOW_REMOTE_COMPONENTS = os.environ.get("ALLOW_REMOTE_COMPONENTS", "true").lower() == "true"
 MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "900"))
 MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
 
@@ -342,7 +342,7 @@ def download_image(url, destination):
 def prepare_artwork(image_path, crop=False):
     try:
         if not image_path or not os.path.exists(image_path):
-            return False
+            return None
 
         with Image.open(image_path) as source:
             image = ImageOps.exif_transpose(source)
@@ -355,17 +355,23 @@ def prepare_artwork(image_path, crop=False):
                 (ARTWORK_SIZE, ARTWORK_SIZE),
                 Image.Resampling.LANCZOS,
             )
+            dest_path = os.path.splitext(image_path)[0] + ".jpg"
             image.save(
-                image_path,
+                dest_path,
                 "JPEG",
                 quality=90,
                 optimize=True,
                 progressive=False,
             )
-        return True
+            if dest_path != image_path and os.path.exists(image_path):
+                try:
+                    os.remove(image_path)
+                except OSError:
+                    pass
+        return dest_path
     except Exception as error:
         log(f"Artwork tidak dapat diproses: {error}")
-        return False
+        return None
 
 
 def embed_metadata(mp3_path, artwork_path, identity, apple_match=None):
@@ -469,8 +475,9 @@ def finalize_download(mp3_path, info, fallback_info=None, custom_thumbnail_url=N
         apple_match = find_apple_music_match(identity)
         if apple_match:
             download_image(apple_match["artwork_url"], apple_artwork)
-            if prepare_artwork(apple_artwork):
-                artwork_path = apple_artwork
+            prep = prepare_artwork(apple_artwork)
+            if prep:
+                artwork_path = prep
                 apple_artwork_ready = True
                 result = apple_match["result"]
                 log(
@@ -491,13 +498,15 @@ def finalize_download(mp3_path, info, fallback_info=None, custom_thumbnail_url=N
             except Exception as error:
                 log(f"Thumbnail fallback tidak dapat diunduh: {error}")
                 youtube_artwork = None
-        if youtube_artwork and prepare_artwork(youtube_artwork, crop=True):
-            artwork_path = youtube_artwork
+        if youtube_artwork:
+            prep = prepare_artwork(youtube_artwork, crop=True)
+            if prep:
+                artwork_path = prep
 
     if artwork_path:
         embed_metadata(mp3_path, artwork_path, identity, apple_match)
 
-    for candidate in {youtube_artwork, apple_artwork}:
+    for candidate in {youtube_artwork, apple_artwork, artwork_path}:
         if candidate and os.path.exists(candidate):
             try:
                 os.remove(candidate)
@@ -557,7 +566,7 @@ def build_ydl_options(output_dir):
         "max_filesize": MAX_SOURCE_BYTES,
         "socket_timeout": 30,
         "noplaylist": True,
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "extractor_args": {"youtube": {"player_client": ["android", "web_embedded", "mweb"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
