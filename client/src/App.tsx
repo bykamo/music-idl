@@ -524,7 +524,7 @@ function App() {
           </div>
 
           <div className="text-center mb-10 space-y-4 pt-6 md:pt-2">
-            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight bg-gradient-to-r from-primary via-primary to-primary/80 bg-clip-text text-transparent">
+            <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-primary">
               Music IDL
             </h1>
             <p className="text-muted-foreground text-base md:text-lg max-w-2xl mx-auto">
