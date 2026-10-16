@@ -52,7 +52,7 @@ MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "900"))
 MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
 
 PRESENTATION_NOISE = re.compile(
-    r"\b(?:official\s+(?:music\s+)?video|official\s+audio|audio\s+official|"
+    r"\b(?:official\s+(?:music\s+|lyric\s+)?video|official\s+audio|audio\s+official|"
     r"lyric\s+video|lyrics?|visuali[sz]er|music\s+video|mv|hd|4k)\b",
     re.IGNORECASE,
 )
@@ -89,6 +89,29 @@ def strip_channel_suffix(value):
     return value.strip()
 
 
+def _trim_edge_junk(value):
+    """Buang spasi/dash/underscore/pipe di ujung.
+
+    Kurung di ujung hanya dibuang kalau TIDAK berpasangan (sisa pembersihan
+    noise); kurung yang seimbang seperti "(feat. X)" tetap dipertahankan.
+    """
+    value = value.rstrip(" -_|")
+    while value and value[-1] in "([":
+        diff = value.count("(") - value.count(")") + value.count("[") - value.count("]")
+        if diff > 0:
+            value = value[:-1].rstrip(" -_|")
+        else:
+            break
+    value = value.lstrip(" -_|")
+    while value and value[0] in ")]":
+        diff = value.count(")") - value.count("(") + value.count("]") - value.count("[")
+        if diff > 0:
+            value = value[1:].lstrip(" -_|")
+        else:
+            break
+    return value
+
+
 def strip_presentation_noise(value):
     value = clean_display_text(value)
     bracketed_noise = (
@@ -97,8 +120,9 @@ def strip_presentation_noise(value):
     )
     value = re.sub(bracketed_noise, " ", value, flags=re.IGNORECASE)
     value = PRESENTATION_NOISE.sub(" ", value)
+    value = re.sub(r"\(\s*\)", " ", value)
     value = re.sub(r"\s+", " ", value)
-    return value.strip(" -_|()[]")
+    return _trim_edge_junk(value)
 
 
 def normalize_text(value):
@@ -486,7 +510,7 @@ def build_clean_filename(identity, original_filename=""):
         clean_base = sanitize_filename(os.path.splitext(os.path.basename(original_filename))[0]) or "Audio Track"
 
     if len(clean_base) > 200:
-        clean_base = clean_base[:200].rstrip(" .-_")
+        clean_base = _trim_edge_junk(clean_base[:200].rstrip(" .-_"))
 
     return f"{clean_base}.mp3"
 
