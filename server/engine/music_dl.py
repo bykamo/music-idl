@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 from difflib import SequenceMatcher
 from io import BytesIO
@@ -20,6 +21,33 @@ DOWNLOAD_PROXY = os.environ.get("DOWNLOAD_PROXY", "").strip()
 DENO_BIN = os.environ.get("DENO_BIN", "deno").strip()
 ALLOW_REMOTE_COMPONENTS = os.environ.get("ALLOW_REMOTE_COMPONENTS", "true").lower() == "true"
 YT_DLP_COOKIES = os.environ.get("YT_DLP_COOKIES", "").strip()
+PROGRESS_EMIT_INTERVAL = float(os.environ.get("PROGRESS_EMIT_INTERVAL", "1.0"))
+_PROGRESS_STATE = {"last_emit": 0.0}
+
+
+def _progress_hook(d):
+    """Kirim progress unduhan sebagai baris `PROGRESS <json>` di stderr.
+
+    Diparse oleh server (job asinkron) untuk update progress bar di UI.
+    """
+    if not isinstance(d, dict):
+        return
+    if d.get("status") == "finished":
+        print("PROGRESS " + json.dumps({"type": "stage", "stage": "converting"}), file=sys.stderr, flush=True)
+        return
+    if d.get("status") != "downloading":
+        return
+    now = time.monotonic()
+    if now - _PROGRESS_STATE["last_emit"] < PROGRESS_EMIT_INTERVAL:
+        return
+    _PROGRESS_STATE["last_emit"] = now
+    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+    payload = json.dumps({
+        "type": "progress",
+        "downloaded": d.get("downloaded_bytes") or 0,
+        "total": total,
+    })
+    print("PROGRESS " + payload, file=sys.stderr, flush=True)
 MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "900"))
 MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
 
@@ -565,6 +593,7 @@ def build_ydl_options(output_dir):
         "format": "bestaudio/best",
         "match_filter": reject_long_media,
         "max_filesize": MAX_SOURCE_BYTES,
+        "progress_hooks": [_progress_hook],
         "socket_timeout": 30,
         "noplaylist": True,
         "extractor_args": {"youtube": {"player_client": ["mweb", "web_embedded"]}},

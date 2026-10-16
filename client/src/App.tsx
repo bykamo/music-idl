@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2 } from 'lucide-react';
+import { Download, User, Loader2, Eye, ThumbsUp, Info, Link as LinkIcon, ClipboardPaste, Music, Trash2, X } from 'lucide-react';
 import { YouTubeMusicIcon } from '@/components/ui/youtube-music-icon';
 import DotField from '@/components/ui/DotField';
 import Loader from '@/components/ui/loader';
@@ -53,6 +53,29 @@ interface ExternalInfo {
   download_url?: string;
 }
 
+interface JobStatus {
+  id: string;
+  status: 'queued' | 'processing' | 'done' | 'error';
+  stage?: 'download' | 'converting' | null;
+  progressPct?: number | null;
+  error?: string | null;
+}
+
+interface PlaylistEntry {
+  videoId: string;
+  title: string;
+  duration_sec: number;
+  thumbnail: string;
+}
+
+interface PlaylistPayload {
+  playlist_id: string;
+  title: string;
+  channel: string;
+  count: number;
+  entries: PlaylistEntry[];
+}
+
 const API_BASE = '/api';
 
 function getApiStatus(error: unknown) {
@@ -75,6 +98,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadStage, setDownloadStage] = useState<{ stage: 'queue' | 'download' | 'convert', pct: number | null } | null>(null);
+  const [playlist, setPlaylist] = useState<PlaylistPayload | null>(null);
   const [detailedInfo, setDetailedInfo] = useState<Record<string, ExternalInfo>>({});
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isLimitOpen, setIsLimitOpen] = useState(false);
@@ -120,8 +145,38 @@ function App() {
     setLoading(true);
     setResults([]);
     setDownloadSuccess(false);
+    setPlaylist(null);
 
     try {
+      // Playlist Flow: link playlist YouTube (list=...) tanpa parameter v
+      const isPlaylistUrl = (() => {
+        try {
+          const u = new URL(query.trim());
+          const host = u.hostname.replace(/^www\./, '');
+          if (!['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(host)) return false;
+          if (u.searchParams.get('v')) return false;
+          const list = u.searchParams.get('list') || '';
+          return /^[A-Za-z0-9_-]{12,64}$/.test(list) && !list.startsWith('RD') && !list.startsWith('UL');
+        } catch { return false; }
+      })();
+
+      if (isPlaylistUrl) {
+        try {
+          const response = await axios.get(`${API_BASE}/playlist?url=${encodeURIComponent(query.trim())}`, { timeout: 70000 });
+          const payload = response.data as PlaylistPayload;
+          if (!payload.entries || payload.entries.length === 0) throw new Error('Playlist kosong.');
+          setPlaylist(payload);
+        } catch (err) {
+          setErrorDialog({
+            isOpen: true,
+            title: 'Playlist Tidak Tersedia',
+            message: getApiMessage(err, 'Playlist tidak dapat dibaca. Pastikan playlist YouTube publik dan masih tersedia.'),
+            isLimit: getApiStatus(err) === 429
+          });
+        } finally { setLoading(false); }
+        return;
+      }
+
       // YouTube Flow
       const extractedId = extractYouTubeVideoId(query.trim());
       if (/^https?:\/\//i.test(query.trim()) && !extractedId) {
@@ -265,9 +320,62 @@ function App() {
     setDownloadSuccess(true);
   };
 
+  const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+  // Job asinkron: buat job, polling status per ~1.2s sampai selesai/gagal
+  const startJobDownload = async (videoId: string, title: string): Promise<string> => {
+    const created = await axios.post<{ jobId: string }>(`${API_BASE}/jobs`, {
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      title: title || videoId
+    }, { timeout: 20000 });
+    const jobId = created.data && created.data.jobId;
+    if (!jobId) throw new Error('Job unduhan gagal dibuat.');
+    setDownloadStage({ stage: 'queue', pct: null });
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 9 * 60 * 1000) {
+      await sleep(1200);
+      const { data } = await axios.get<JobStatus>(`${API_BASE}/jobs/${jobId}`, { timeout: 10000 });
+      if (data.status === 'done') {
+        setDownloadStage(null);
+        return jobId;
+      }
+      if (data.status === 'error') {
+        setDownloadStage(null);
+        throw new Error(data.error || 'Engine gagal memproses unduhan.');
+      }
+      setDownloadStage({
+        stage: data.stage === 'converting' ? 'convert' : 'download',
+        pct: data.progressPct ?? null
+      });
+    }
+    setDownloadStage(null);
+    throw new Error('Batas waktu unduhan terlampaui.');
+  };
+
   const downloadMusic = async (videoId: string, title: string) => {
     setDownloading(videoId);
     try {
+      // Jalur baru (P3-A): job asinkron dengan progress, lalu ambil file dari server
+      try {
+        const jobId = await startJobDownload(videoId, title);
+        const link = document.createElement('a');
+        link.href = `${API_BASE}/jobs/${jobId}/file`;
+        link.setAttribute('download', `${sanitizeDownloadTitle(title)}.mp3`);
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setDownloadSuccess(true);
+        return;
+      } catch (jobErr: unknown) {
+        if (getApiStatus(jobErr) === 429) {
+          setIsLimitOpen(true);
+          return;
+        }
+        // Job gagal dibuat/dalam proses (503 sibuk, engine error) → coba jalur klasik
+      }
+
       const ext = detailedInfo[videoId];
       if (ext?.download_url) {
         triggerDownload(ext.download_url, ext.title || title, videoId);
@@ -310,7 +418,21 @@ function App() {
           isLimit: false
         });
       }
-    } finally { setDownloading(null); }
+    } finally {
+      setDownloading(null);
+      setDownloadStage(null);
+    }
+  };
+
+  const downloadAllSequential = async () => {
+    if (!playlist || playlist.entries.length === 0) return;
+    for (const entry of playlist.entries) {
+      try {
+        await downloadMusic(entry.videoId, entry.title);
+      } catch {
+        // Lanjut ke item berikutnya meski satu gagal
+      }
+    }
   };
 
   const fetchExternalInfo = async (videoId: string) => {
@@ -489,6 +611,73 @@ function App() {
             </div>
           </form>
 
+          {playlist && (
+            <div className="glass-card max-w-2xl mx-auto mb-10 p-4 md:p-5">
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div className="min-w-0">
+                  <span className="bg-primary px-2 py-0.5 rounded-full text-[10px] font-bold uppercase text-primary-foreground">
+                    {playlist.count} lagu
+                  </span>
+                  <h3 className="mt-2 font-bold text-lg text-foreground truncate">{playlist.title}</h3>
+                  {playlist.channel && <p className="text-xs text-muted-foreground truncate">{playlist.channel}</p>}
+                </div>
+                <button onClick={() => setPlaylist(null)} className="text-muted-foreground hover:text-foreground shrink-0 transition-colors" title="Tutup playlist">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex flex-col gap-2 max-h-[55vh] overflow-y-auto pr-1">
+                {playlist.entries.map((entry) => (
+                  <div key={entry.videoId} className="flex items-center gap-3 rounded-xl border border-border bg-card/60 p-2">
+                    <img
+                      src={entry.thumbnail}
+                      alt={entry.title}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className="h-11 w-11 rounded-lg object-cover bg-muted shrink-0"
+                      onError={(e) => {
+                        const t = e.target as HTMLImageElement;
+                        if (!t.src.includes('hqdefault.jpg')) t.src = `https://i.ytimg.com/vi/${entry.videoId}/hqdefault.jpg`;
+                      }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground truncate">{entry.title}</p>
+                      <p className="text-[11px] text-muted-foreground">{formatDuration(entry.duration_sec)}</p>
+                    </div>
+                    <button
+                      onClick={() => downloadMusic(entry.videoId, entry.title)}
+                      disabled={!!downloading}
+                      className="shrink-0 bg-primary text-primary-foreground rounded-full px-4 py-1.5 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-60 hover:opacity-90 active:scale-95"
+                    >
+                      {downloading === entry.videoId ? (
+                        <Loader2 className="animate-spin" size={12} />
+                      ) : (
+                        <Download size={12} />
+                      )}
+                      {downloading === entry.videoId ? '...' : 'Unduh'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={downloadAllSequential}
+                disabled={!!downloading}
+                className={`mt-4 w-full py-2.5 rounded-full font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-70 ${downloading ? 'bg-muted border border-border text-foreground' : 'bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.99]'}`}
+              >
+                {downloading ? (
+                  <>
+                    <Loader2 className="animate-spin" size={14} />
+                    Mengunduh berurutan (max 100)...
+                  </>
+                ) : (
+                  <>
+                    <Download size={14} />
+                    Unduh Semuanya ({playlist.entries.length})
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {loading && <SearchSkeleton />}
 
           {!loading && results.length > 0 && (
@@ -558,7 +747,7 @@ function App() {
                           <div className="flex justify-between text-[11px] font-medium"><span className="text-foreground">{formatSize(ext.filesize)}</span><span className="text-foreground">{ext.bitrate}</span></div>
                         </div>
                       )}
-                      <div className="mt-auto pt-2 flex justify-center">
+                      <div className="mt-auto pt-2 flex flex-col items-center gap-2">
                         <button
                           onClick={() => downloadMusic(item.videoId, ext?.title || item.name)}
                           disabled={!!downloading}
@@ -566,10 +755,22 @@ function App() {
                         >
                           <span className="relative z-10 flex items-center gap-2">
                             {downloading === item.videoId ? (
-                              <>
-                                <Loader2 className="animate-spin" size={16} />
-                                Menyiapkan unduhan...
-                              </>
+                              downloadStage?.stage === 'convert' ? (
+                                <>
+                                  <Loader2 className="animate-spin" size={16} />
+                                  Konversi MP3...
+                                </>
+                              ) : downloadStage?.stage === 'download' && downloadStage.pct !== null ? (
+                                <>
+                                  <Loader2 className="animate-spin" size={16} />
+                                  Mengunduh {downloadStage.pct}%
+                                </>
+                              ) : (
+                                <>
+                                  <Loader2 className="animate-spin" size={16} />
+                                  Menyiapkan unduhan...
+                                </>
+                              )
                             ) : (
                               <>
                                 <Download size={16} />
@@ -578,6 +779,14 @@ function App() {
                             )}
                           </span>
                         </button>
+                        {downloading === item.videoId && downloadStage?.stage === 'download' && downloadStage.pct !== null && (
+                          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary transition-all duration-500"
+                              style={{ width: `${downloadStage.pct}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

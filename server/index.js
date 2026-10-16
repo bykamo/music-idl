@@ -5,7 +5,8 @@ const path = require('path');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
+const crypto = require('crypto');
 const {
     DownloadGate,
     normalizeYouTubeUrl,
@@ -54,6 +55,8 @@ app.set('trust proxy', Number.parseInt(process.env.TRUST_PROXY_HOPS || '1', 10))
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 200,
+    // Polling status job boleh sering; dilindungi limiter khusus di route-nya.
+    skip: req => req.method === 'GET' && /^\/jobs\/[0-9a-fA-F-]{8,64}$/.test(req.path),
     message: { error: 'TOO_MANY_REQUESTS', message: 'Terlalu banyak permintaan dari IP ini, silakan coba lagi nanti.' }
 });
 app.use('/api/', apiLimiter);
@@ -63,6 +66,46 @@ const downloadLimiter = rateLimit({
     max: 60,
     message: { error: 'DOWNLOAD_RATE_LIMIT', message: 'Batas unduhan per jam tercapai. Coba lagi nanti.' }
 });
+
+const jobsPollLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 600,
+    message: { error: 'TOO_MANY_REQUESTS', message: 'Terlalu banyak pemantauan job dari IP ini.' }
+});
+
+// --- Cache respons (search / info / playlist) ---
+const CACHE_TTL_MS = Math.max(0, Number.parseInt(process.env.CACHE_TTL_MS || '600000', 10));
+const CACHE_MAX_ENTRIES = 200;
+const responseCache = new Map();
+
+function cacheGet(key) {
+    const hit = responseCache.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.t > CACHE_TTL_MS) {
+        responseCache.delete(key);
+        return null;
+    }
+    responseCache.delete(key);
+    responseCache.set(key, hit); // segarkan urutan LRU
+    return hit.v;
+}
+
+function cacheSet(key, value) {
+    responseCache.set(key, { t: Date.now(), v: value });
+    while (responseCache.size > CACHE_MAX_ENTRIES) {
+        const oldest = responseCache.keys().next().value;
+        responseCache.delete(oldest);
+    }
+}
+
+// Env bersih untuk child engine/yt-dlp: buang PYTHONPATH/PYTHONHOME warisan shell
+// (mis. venv Hermes py3.14 yang bikin PIL/ABI bentrok di interpreter py3.12).
+function getEngineEnv() {
+    const env = { ...process.env };
+    delete env.PYTHONPATH;
+    delete env.PYTHONHOME;
+    return env;
+}
 
 // Logger
 app.use((req, res, next) => {
@@ -159,7 +202,7 @@ function runEngineDownload(url, signal) {
         try {
             execFile(PYTHON_BIN, [engineScriptPath, url, jobDir], {
                 cwd: __dirname,
-                env: process.env,
+                env: getEngineEnv(),
                 maxBuffer: 5 * 1024 * 1024,
                 timeout: Math.max(1000, ENGINE_TIMEOUT_MS || 600000),
                 signal
@@ -218,10 +261,18 @@ app.get('/api/search', async (req, res) => {
         });
     }
 
+    const cacheKey = `search:${query.toLowerCase()}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+        console.log(`[Cache] HIT search: ${query}`);
+        return res.json(cached);
+    }
+
     try {
         await initYT();
         const results = await ytmusic.search(query);
         const filtered = results.filter(item => item.type === 'SONG' || item.type === 'VIDEO');
+        cacheSet(cacheKey, filtered);
         res.json(filtered);
     } catch (err) {
         console.error('Search error:', err.message);
@@ -318,7 +369,8 @@ function getYoutubeVideoInfo(url, videoId) {
         args.push(url);
         execFile(YT_DLP_BIN, args, {
             timeout: Math.max(1000, INFO_TIMEOUT_MS || 30000),
-            maxBuffer: 5 * 1024 * 1024
+            maxBuffer: 5 * 1024 * 1024,
+            env: getEngineEnv()
         }, async (error, stdout) => {
             if (error) {
                 console.error('Info extract error, using oEmbed fallback:', error.message);
@@ -348,10 +400,15 @@ app.get('/api/url-info', async (req, res) => {
     try {
         const targetUrl = normalizeYouTubeUrl(req.query.url);
         const videoId = new URL(targetUrl).searchParams.get('v');
+
+        const cacheKey = `info:${videoId}`;
+        const cached = cacheGet(cacheKey);
+        if (cached) return res.json(cached);
+
         const info = await getYoutubeVideoInfo(targetUrl, videoId);
         const thumbnail = info.thumbnail || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
-        return res.json({
+        const payload = {
             videoId,
             name: info.title,
             artist: { name: info.uploader },
@@ -371,7 +428,9 @@ app.get('/api/url-info', async (req, res) => {
                 like_count: info.likeCount || 0,
                 upload_date: info.uploadDate || ''
             }
-        });
+        };
+        cacheSet(cacheKey, payload);
+        return res.json(payload);
     } catch (err) {
         if (sendPolicyError(res, err)) return;
         console.error('URL metadata error:', err.message);
@@ -391,6 +450,95 @@ app.get('/api/fallback-download', (req, res) => {
         });
     } catch (err) {
         return sendPolicyError(res, err) || res.status(400).json({ error: 'INVALID_VIDEO_ID' });
+    }
+});
+
+function getYtDlpBaseArgs() {
+    const args = [
+        '--socket-timeout', '20',
+        '--extractor-args', 'youtube:player_client=mweb,web_embedded',
+        '--no-playlist'
+    ];
+    if (DOWNLOAD_PROXY) args.push('--proxy', DOWNLOAD_PROXY);
+    const ytDlpCookies = (process.env.YT_DLP_COOKIES || '').trim();
+    if (ytDlpCookies && fs.existsSync(ytDlpCookies)) args.push('--cookies', ytDlpCookies);
+    const denoBin = process.env.DENO_BIN || '/usr/local/bin/deno';
+    args.push('--js-runtimes', `deno:${denoBin}`);
+    args.push('--remote-components', 'ejs:github');
+    return args;
+}
+
+function extractPlaylistId(rawUrl) {
+    let parsed;
+    try { parsed = new URL(rawUrl); } catch { return null; }
+    const host = parsed.hostname.replace(/^www\./, '');
+    if (!['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(host)) return null;
+    const listId = (parsed.searchParams.get('list') || '').trim();
+    if (!/^[A-Za-z0-9_-]{12,64}$/.test(listId)) return null;
+    if (listId.startsWith('RD') || listId.startsWith('UL')) return null; // Mix/radio: entri tidak stabil
+    return listId;
+}
+
+app.get('/api/playlist', async (req, res) => {
+    const raw = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    if (!raw) return res.status(400).json({ error: 'INVALID_URL', message: 'Masukkan link playlist YouTube.' });
+    const listId = extractPlaylistId(raw);
+    if (!listId) {
+        return res.status(400).json({
+            error: 'INVALID_PLAYLIST',
+            message: 'Link playlist YouTube tidak valid. Mix/radio (RD...) belum didukung.'
+        });
+    }
+
+    const cacheKey = `playlist:${listId}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
+    const canonical = `https://www.youtube.com/playlist?list=${listId}`;
+    const args = [
+        ...getYtDlpBaseArgs(),
+        '--flat-playlist',
+        '--dump-single-json',
+        '--playlist-items', '1:100',
+        canonical
+    ];
+
+    try {
+        const stdout = await new Promise((resolve, reject) => {
+            execFile(YT_DLP_BIN, args, {
+                timeout: Math.max(30000, INFO_TIMEOUT_MS * 2),
+                maxBuffer: 16 * 1024 * 1024,
+                env: getEngineEnv()
+            }, (err, out) => (err ? reject(err) : resolve(out)));
+        });
+        const parsed = JSON.parse(stdout);
+        const entries = (Array.isArray(parsed.entries) ? parsed.entries : [])
+            .filter(e => e && /^[A-Za-z0-9_-]{11}$/.test(String(e.id || '')))
+            .slice(0, 100)
+            .map(e => ({
+                videoId: e.id,
+                title: e.title || 'Track',
+                duration_sec: Math.max(0, Number(e.duration) || 0),
+                thumbnail: (Array.isArray(e.thumbnails) && e.thumbnails.length > 0)
+                    ? e.thumbnails[e.thumbnails.length - 1].url
+                    : `https://i.ytimg.com/vi/${e.id}/hqdefault.jpg`
+            }));
+        const payload = {
+            playlist_id: listId,
+            title: parsed.title || 'Playlist',
+            channel: parsed.channel || parsed.uploader || '',
+            count: entries.length,
+            entries
+        };
+        if (payload.count > 0) cacheSet(cacheKey, payload);
+        console.log(`[Playlist] ${listId}: ${payload.count} entri`);
+        return res.json(payload);
+    } catch (err) {
+        console.error('Playlist error:', err.message);
+        return res.status(502).json({
+            error: 'PLAYLIST_UNAVAILABLE',
+            message: 'Playlist tidak dapat dibaca. Pastikan playlist publik dan masih tersedia.'
+        });
     }
 });
 
@@ -433,6 +581,187 @@ app.get('/api/engine-download', downloadLimiter, async (req, res) => {
             });
         }
     }
+});
+
+// --- Job registry: unduhan asinkron dengan progress ---
+const jobs = new Map();
+const JOB_MAX_ENTRIES = 100;
+const JOB_MAX_INFLIGHT = Math.max(1, MAX_ACTIVE_DOWNLOADS) + Math.max(0, MAX_QUEUED_DOWNLOADS);
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, job] of jobs) {
+        if (job.createdAt && now - job.createdAt > JOB_TTL_MS) {
+            jobs.delete(id);
+            if (job.jobDir) removeJobDir(job.jobDir);
+        }
+    }
+}, 5 * 60 * 1000).unref();
+
+function updateJobProgress(job, parsed) {
+    if (!parsed || typeof parsed !== 'object') return;
+    if (parsed.type === 'stage') {
+        job.stage = parsed.stage; // 'converting'
+        return;
+    }
+    job.stage = 'download';
+    job.downloadedBytes = Math.max(0, Number(parsed.downloaded) || 0);
+    job.totalBytes = Math.max(0, Number(parsed.total) || 0);
+    job.progressPct = job.totalBytes > 0
+        ? Math.min(99, Math.round((job.downloadedBytes / job.totalBytes) * 100))
+        : null;
+}
+
+function runEngineJob(url, job) {
+    return new Promise((resolve, reject) => {
+        const jobDir = fs.mkdtempSync(path.join(outputDir, 'job-'));
+        job.jobDir = jobDir;
+        const child = spawn(PYTHON_BIN, [engineScriptPath, url, jobDir], {
+            cwd: __dirname,
+            env: getEngineEnv()
+        });
+        let stdoutBuf = '';
+        let stderrBuf = '';
+        const killTimer = setTimeout(() => {
+            const err = new Error('Proses unduhan melewati batas waktu.');
+            err.killed = true;
+            child.kill('SIGKILL');
+            reject(err);
+        }, Math.max(1000, ENGINE_TIMEOUT_MS || 600000));
+
+        child.stdout.on('data', chunk => {
+            stdoutBuf += chunk;
+            if (stdoutBuf.length > 1e6) stdoutBuf = stdoutBuf.slice(-2e5);
+        });
+        child.stderr.on('data', chunk => {
+            stderrBuf += chunk;
+            if (stderrBuf.length > 1e6) stderrBuf = stderrBuf.slice(-2e5);
+            const lines = stderrBuf.split('\n');
+            stderrBuf = lines.pop();
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('PROGRESS ')) {
+                    try { updateJobProgress(job, JSON.parse(trimmed.slice(9))); } catch { /* abaikan */ }
+                }
+            }
+        });
+        child.on('error', err => {
+            clearTimeout(killTimer);
+            removeJobDir(jobDir);
+            job.jobDir = null;
+            reject(err);
+        });
+        child.on('close', code => {
+            clearTimeout(killTimer);
+            if (code !== 0) {
+                removeJobDir(jobDir);
+                job.jobDir = null;
+                return reject(new Error(`Engine berhenti dengan kode ${code}`));
+            }
+            try {
+                const resultLine = stdoutBuf.trim().split('\n').filter(Boolean).at(-1);
+                const result = JSON.parse(resultLine);
+                const fullPath = path.resolve(result.file_path);
+                const relativePath = path.relative(jobDir, fullPath);
+                if (
+                    result.status !== 'ok'
+                    || relativePath.startsWith('..')
+                    || path.isAbsolute(relativePath)
+                    || path.extname(fullPath).toLowerCase() !== '.mp3'
+                    || !fs.existsSync(fullPath)
+                ) {
+                    throw new Error('Engine returned an invalid MP3 path');
+                }
+                job.filePath = fullPath;
+                job.fileName = path.basename(fullPath);
+                job.stage = 'done';
+                resolve(job);
+            } catch (err) {
+                removeJobDir(jobDir);
+                job.jobDir = null;
+                reject(err);
+            }
+        });
+    });
+}
+
+app.post('/api/jobs', (req, res) => {
+    try {
+        const rawUrl =(req.body && typeof req.body.url === 'string') ? req.body.url.trim() : '';
+        if (!rawUrl) return res.status(400).json({ error: 'INVALID_URL', message: 'Link YouTube tidak ditemukan.' });
+        const targetUrl = normalizeYouTubeUrl(rawUrl);
+        const videoId = new URL(targetUrl).searchParams.get('v') || '';
+
+        const inflight = Array.from(jobs.values())
+            .filter(j => j.status === 'queued' || j.status === 'processing').length;
+        if (jobs.size >= JOB_MAX_ENTRIES || inflight >= JOB_MAX_INFLIGHT) {
+            return res.status(503).json({ error: 'JOBS_BUSY', message: 'Server sedang sibuk, coba lagi sebentar.' });
+        }
+
+        const titleHint = (req.body && typeof req.body.title === 'string' && req.body.title.trim())
+            ? req.body.title.trim().slice(0, 200) : videoId;
+        const jobId = crypto.randomUUID();
+        const job = {
+            id: jobId, url: targetUrl, videoId, titleHint,
+            status: 'queued', stage: null,
+            progressPct: null, downloadedBytes: 0, totalBytes: 0,
+            fileName: '', filePath: '', jobDir: null,
+            createdAt: Date.now()
+        };
+        jobs.set(jobId, job);
+        res.status(202).json({ jobId, status: job.status });
+
+        const clientId = `job:${req.ip || 'unknown'}`;
+        downloadGate.run(clientId, () => {
+            job.status = 'processing';
+            return runEngineJob(targetUrl, job);
+        }).then(() => {
+            job.status = 'done';
+            job.finishedAt = Date.now();
+            console.log(`[Job] ${jobId} selesai: ${job.fileName}`);
+        }).catch(err => {
+            job.status = 'error';
+            job.error = (err && err.killed)
+                ? 'Batas waktu unduhan terlampaui.'
+                : ((err && err.message) || 'Engine gagal memproses unduhan.');
+            console.error(`[Job] ${jobId} gagal: ${job.error}`);
+        });
+    } catch (err) {
+        if (sendPolicyError(res, err)) return;
+        return res.status(400).json({ error: 'INVALID_URL', message: 'Link YouTube tidak valid.' });
+    }
+});
+
+app.get('/api/jobs/:id', jobsPollLimiter, (req, res) => {
+    const job = jobs.get(String(req.params.id || ''));
+    if (!job) return res.status(404).json({ error: 'JOB_NOT_FOUND', message: 'Job tidak ditemukan atau sudah kedaluwarsa.' });
+    return res.json({
+        id: job.id,
+        status: job.status,
+        stage: job.stage,
+        videoId: job.videoId,
+        titleHint: job.titleHint,
+        fileName: job.status === 'done' ? job.fileName : '',
+        progressPct: job.progressPct,
+        downloadedBytes: job.downloadedBytes,
+        totalBytes: job.totalBytes,
+        error: job.status === 'error' ? job.error : null
+    });
+});
+
+app.get('/api/jobs/:id/file', downloadLimiter, (req, res) => {
+    const job = jobs.get(String(req.params.id || ''));
+    if (!job) return res.status(404).json({ error: 'JOB_NOT_FOUND', message: 'Job tidak ditemukan atau sudah kedaluwarsa.' });
+    if (job.status !== 'done' || !job.filePath || !fs.existsSync(job.filePath)) {
+        return res.status(409).json({ error: 'JOB_NOT_READY', message: 'File belum siap diunduh.' });
+    }
+    const { filePath, fileName, jobDir, id } = job;
+    res.download(filePath, fileName, err => {
+        if (!err) {  // file terkirim penuh; bersihkan job agar tidak nyangkut
+            jobs.delete(id);
+            if (jobDir) removeJobDir(jobDir);
+        }
+    });
 });
 
 app.use('/api', (req, res) => {
