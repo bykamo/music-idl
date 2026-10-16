@@ -307,9 +307,11 @@ function getYoutubeVideoInfo(url, videoId) {
             '--dump-single-json',
             '--no-playlist',
             '--socket-timeout', '15',
-            '--extractor-args', 'youtube:player_client=android,web_embedded,mweb'
+            '--extractor-args', 'youtube:player_client=mweb,web_embedded'
         ];
         if (DOWNLOAD_PROXY) args.push('--proxy', DOWNLOAD_PROXY);
+        const ytDlpCookies = (process.env.YT_DLP_COOKIES || '').trim();
+        if (ytDlpCookies && require('fs').existsSync(ytDlpCookies)) args.push('--cookies', ytDlpCookies);
         const denoBin = process.env.DENO_BIN || '/usr/local/bin/deno';
         args.push('--js-runtimes', `deno:${denoBin}`);
         args.push('--remote-components', 'ejs:github');

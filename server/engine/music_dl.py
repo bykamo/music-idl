@@ -19,6 +19,7 @@ USER_AGENT = "Music-IDL/1.0"
 DOWNLOAD_PROXY = os.environ.get("DOWNLOAD_PROXY", "").strip()
 DENO_BIN = os.environ.get("DENO_BIN", "deno").strip()
 ALLOW_REMOTE_COMPONENTS = os.environ.get("ALLOW_REMOTE_COMPONENTS", "true").lower() == "true"
+YT_DLP_COOKIES = os.environ.get("YT_DLP_COOKIES", "").strip()
 MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "900"))
 MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(100 * 1024 * 1024)))
 
@@ -566,7 +567,7 @@ def build_ydl_options(output_dir):
         "max_filesize": MAX_SOURCE_BYTES,
         "socket_timeout": 30,
         "noplaylist": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "web_embedded", "mweb"]}},
+        "extractor_args": {"youtube": {"player_client": ["mweb", "web_embedded"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -582,6 +583,8 @@ def build_ydl_options(output_dir):
     }
     if DOWNLOAD_PROXY:
         options["proxy"] = DOWNLOAD_PROXY
+    if YT_DLP_COOKIES and os.path.isfile(YT_DLP_COOKIES):
+        options["cookiefile"] = YT_DLP_COOKIES
     if DENO_BIN:
         options["js_runtimes"] = {"deno": {"path": DENO_BIN}}
     if ALLOW_REMOTE_COMPONENTS:
