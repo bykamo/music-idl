@@ -502,7 +502,9 @@ function App() {
         isLimit={errorDialog.isLimit}
       />
       {isInitialLoading && <Loader />}
-      <div className="relative min-h-screen w-full bg-background transition-colors duration-300 overflow-x-hidden">
+      {/* Tanpa transition-colors: transisi bg via CSS var + .dark bisa "stuck"
+          di warna lama (bg gak ikut kebalik saat toggle tema). Ganti tema instan. */}
+      <div className="relative min-h-screen w-full bg-background overflow-x-hidden">
         <DotField
           className="absolute inset-0 z-0 pointer-events-none"
           dotRadius={5}

@@ -87,7 +87,9 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
-    @apply min-h-screen transition-colors duration-300;
+    /* transition-colors dihapus: kombinasi transition + var(--background)
+       bikin bg "stuck" di warna lama saat toggle tema (bg gak kebalik). */
+    @apply min-h-screen;
     font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   }
 }
